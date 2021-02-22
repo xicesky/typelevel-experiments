@@ -21,6 +21,30 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - base >= 4.7 && < 5
+- singletons
+
+
+default-extensions:
+- DataKinds
+- DefaultSignatures
+- EmptyCase
+- ExistentialQuantification
+- FlexibleContexts
+- FlexibleInstances
+- GADTs
+- InstanceSigs
+- KindSignatures
+- NoCUSKs
+- NoStarIsType
+- PolyKinds
+- RankNTypes
+- ScopedTypeVariables
+- StandaloneKindSignatures
+- TemplateHaskell
+- TypeApplications
+- TypeFamilies
+- TypeOperators
+- UndecidableInstances
 
 library:
   source-dirs: src

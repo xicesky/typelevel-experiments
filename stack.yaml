@@ -48,6 +48,7 @@ packages:
 # extra-package-dbs: []
 
 ghc-options:
+  "$locals": -Wall
   "$everything": -haddock
 
 # Control whether we use the GHC we find on the path
