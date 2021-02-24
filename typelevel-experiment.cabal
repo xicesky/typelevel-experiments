@@ -35,7 +35,7 @@ library
       Paths_typelevel_experiment
   hs-source-dirs:
       src
-  default-extensions: DataKinds DefaultSignatures EmptyCase ExistentialQuantification FlexibleContexts FlexibleInstances GADTs InstanceSigs KindSignatures NoCUSKs NoStarIsType PolyKinds RankNTypes ScopedTypeVariables StandaloneKindSignatures TemplateHaskell TypeApplications TypeFamilies TypeOperators UndecidableInstances
+  default-extensions: DataKinds DefaultSignatures EmptyCase ExistentialQuantification FlexibleContexts FlexibleInstances GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses NoCUSKs NoStarIsType PolyKinds RankNTypes ScopedTypeVariables StandaloneKindSignatures TemplateHaskell TypeApplications TypeFamilies TypeOperators UndecidableInstances
   build-depends:
       base >=4.7 && <5
     , singletons
@@ -48,7 +48,7 @@ executable typelevel-experiment-exe
       Paths_typelevel_experiment
   hs-source-dirs:
       app
-  default-extensions: DataKinds DefaultSignatures EmptyCase ExistentialQuantification FlexibleContexts FlexibleInstances GADTs InstanceSigs KindSignatures NoCUSKs NoStarIsType PolyKinds RankNTypes ScopedTypeVariables StandaloneKindSignatures TemplateHaskell TypeApplications TypeFamilies TypeOperators UndecidableInstances
+  default-extensions: DataKinds DefaultSignatures EmptyCase ExistentialQuantification FlexibleContexts FlexibleInstances GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses NoCUSKs NoStarIsType PolyKinds RankNTypes ScopedTypeVariables StandaloneKindSignatures TemplateHaskell TypeApplications TypeFamilies TypeOperators UndecidableInstances
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
@@ -64,7 +64,7 @@ test-suite typelevel-experiment-test
       Paths_typelevel_experiment
   hs-source-dirs:
       test
-  default-extensions: DataKinds DefaultSignatures EmptyCase ExistentialQuantification FlexibleContexts FlexibleInstances GADTs InstanceSigs KindSignatures NoCUSKs NoStarIsType PolyKinds RankNTypes ScopedTypeVariables StandaloneKindSignatures TemplateHaskell TypeApplications TypeFamilies TypeOperators UndecidableInstances
+  default-extensions: DataKinds DefaultSignatures EmptyCase ExistentialQuantification FlexibleContexts FlexibleInstances GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses NoCUSKs NoStarIsType PolyKinds RankNTypes ScopedTypeVariables StandaloneKindSignatures TemplateHaskell TypeApplications TypeFamilies TypeOperators UndecidableInstances
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5

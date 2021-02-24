@@ -35,6 +35,8 @@ default-extensions:
 - GADTs
 - InstanceSigs
 - KindSignatures
+- LambdaCase
+- MultiParamTypeClasses
 - NoCUSKs
 - NoStarIsType
 - PolyKinds
