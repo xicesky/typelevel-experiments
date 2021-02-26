@@ -12,10 +12,6 @@ Use ":k!" to evaluate types:
 
 -}
 
-{-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE KindSignatures             #-}
-{-# LANGUAGE StandaloneDeriving         #-}
 {-# OPTIONS_GHC
     -Wno-missing-signatures
     -fenable-th-splice-warnings

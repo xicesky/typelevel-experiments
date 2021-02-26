@@ -24,10 +24,13 @@ dependencies:
 - text
 - singletons
 
-
 default-extensions:
+- ConstraintKinds
 - DataKinds
 - DefaultSignatures
+- DeriveFunctor
+- DeriveFoldable
+- DeriveTraversable
 - EmptyCase
 - ExistentialQuantification
 - FlexibleContexts
@@ -42,6 +45,7 @@ default-extensions:
 - PolyKinds
 - RankNTypes
 - ScopedTypeVariables
+- StandaloneDeriving
 - StandaloneKindSignatures
 - TemplateHaskell
 - TypeApplications
