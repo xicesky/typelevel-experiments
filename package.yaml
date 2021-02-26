@@ -1,10 +1,10 @@
-name:                typelevel-experiment
+name:                typelevel-experiments
 version:             0.1.0.0
-github:              "githubuser/typelevel-experiment"
+github:              "xicesky/typelevel-experiments"
 license:             BSD3
-author:              "Author name here"
+author:              "Markus Dangl"
 maintainer:          "example@example.com"
-copyright:           "2021 Author name here"
+copyright:           "2021 Markus Dangl"
 
 extra-source-files:
 - README.md
@@ -17,12 +17,14 @@ extra-source-files:
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
 # common to point users to the README.md file.
-description:         Please see the README on GitHub at <https://github.com/githubuser/typelevel-experiment#readme>
+description:         Please see the README on GitHub at <https://github.com/xicesky/typelevel-experiments#readme>
 
 dependencies:
 - base >= 4.7 && < 5
 - text
 - singletons
+- decidable
+#- list-witnesses
 
 default-extensions:
 - ConstraintKinds
@@ -57,7 +59,7 @@ library:
   source-dirs: src
 
 executables:
-  typelevel-experiment-exe:
+  typelevel-experiments-exe:
     main:                Main.hs
     source-dirs:         app
     ghc-options:
@@ -65,10 +67,10 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - typelevel-experiment
+    - typelevel-experiments
 
 tests:
-  typelevel-experiment-test:
+  typelevel-experiments-test:
     main:                Spec.hs
     source-dirs:         test
     ghc-options:
@@ -76,4 +78,4 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - typelevel-experiment
+    - typelevel-experiments

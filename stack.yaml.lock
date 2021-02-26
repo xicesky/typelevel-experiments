@@ -3,7 +3,29 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages: []
+packages:
+- completed:
+    size: 14828
+    url: https://github.com/xicesky/functor-products/archive/7659b96423387a83842b42f938b436dbbb88bc24.tar.gz
+    name: functor-products
+    version: 0.1.1.0
+    sha256: 89a44345d50d7b6e5387e9dc6981547c253c25627ab2c545f14abcfc6329648e
+    pantry-tree:
+      size: 667
+      sha256: 95cc5cd98e5c723d7baba1bc865a8d354560a9503c3968e4ec330fdb3e541cfa
+  original:
+    url: https://github.com/xicesky/functor-products/archive/7659b96423387a83842b42f938b436dbbb88bc24.tar.gz
+- completed:
+    size: 24978
+    url: https://github.com/xicesky/decidable/archive/e5055588d1565cd14f3741549564522884793737.tar.gz
+    name: decidable
+    version: 0.3.0.0
+    sha256: dc64fcd1045dcd9d9f899a4329dbbffd5aea0d543cb1ecfeaa1fdf2c03fd846c
+    pantry-tree:
+      size: 1024
+      sha256: 8b2053bdfeb319d6b71ab6fa9355b28507d8ac09b2b66fe2cc5b318c1b9a32b0
+  original:
+    url: https://github.com/xicesky/decidable/archive/e5055588d1565cd14f3741549564522884793737.tar.gz
 snapshots:
 - completed:
     size: 563103
