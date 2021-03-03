@@ -7,7 +7,7 @@
 
 -- https://www.youtube.com/watch?v=ZoygbBiLo-w
 -- https://talks.jle.im/lambdaconf-2017/singletons/singleton-slides.html
-module SimpleDataKinds where
+module Typelevel.SimpleDataKinds where
 
 import Data.Kind    ( Type )
 

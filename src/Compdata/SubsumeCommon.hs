@@ -17,7 +17,7 @@
 
 -- Testing stuff on Data.Comp.SubsumeCommon
 
-module SubsumeCommon where
+module Compdata.SubsumeCommon where
 
 import Data.Kind    ( Type, Constraint )
 import Data.Void

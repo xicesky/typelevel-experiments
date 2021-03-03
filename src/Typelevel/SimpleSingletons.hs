@@ -25,7 +25,7 @@ Use ":k!" to evaluate types:
 -- https://www.youtube.com/watch?v=ZoygbBiLo-w
 -- https://talks.jle.im/lambdaconf-2017/singletons/singleton-slides.html
 
-module SimpleSingletons where
+module Typelevel.SimpleSingletons where
 
 import Data.Kind    ( Type )
 import Data.Void    ( absurd )

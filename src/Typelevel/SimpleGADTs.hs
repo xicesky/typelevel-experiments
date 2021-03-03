@@ -5,7 +5,7 @@
 
 -- https://www.youtube.com/watch?v=6snteFntvjM
 -- https://github.com/goldfirere/glambda
-module SimpleGADTs where
+module Typelevel.SimpleGADTs where
 
 {--------------------------------------------------------------------------------------------------}
 -- | A very simple newtype wrapper

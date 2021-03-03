@@ -7,7 +7,7 @@
     -fenable-th-splice-warnings
 #-}
 
-module SimpleSingletonsEx01 where
+module Typelevel.SimpleSingletonsEx01 where
 
 import Data.Kind    ( Type )
 

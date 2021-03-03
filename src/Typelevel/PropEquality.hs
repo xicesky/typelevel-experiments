@@ -7,7 +7,7 @@
 
 -- https://typesandkinds.wordpress.com/2012/12/01/decidable-propositional-equality-in-haskell/
 
-module PropEquality where
+module Typelevel.PropEquality where
 
 import Data.Kind    ( Type, Constraint )
 import Data.Void

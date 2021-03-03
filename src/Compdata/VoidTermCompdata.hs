@@ -16,7 +16,7 @@
 {-# LANGUAGE UndecidableInstances   #-}
 {-# LANGUAGE GADTs                #-}
 
-module VoidTermCompdata where
+module Compdata.VoidTermCompdata where
 
 import Control.Applicative hiding (Const)
 import Control.Monad hiding (mapM, sequence)

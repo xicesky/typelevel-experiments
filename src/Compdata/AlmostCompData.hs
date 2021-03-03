@@ -5,7 +5,7 @@
     -Wno-unused-imports
 #-}
 
-module AlmostCompData where
+module Compdata.AlmostCompData where
 
 import Prelude
 import Data.Kind    ( Type, Constraint )

@@ -25,18 +25,18 @@ source-repository head
 
 library
   exposed-modules:
-      AlmostCompData
       Bound.DemoBound
       Bound.Simple
+      Compdata.AlmostCompData
+      Compdata.SubsumeCommon
+      Compdata.VoidTermCompdata
       Impredicative
       PatternSynonyms
-      PropEquality
-      SimpleDataKinds
-      SimpleGADTs
-      SimpleSingletons
-      SimpleSingletonsEx01
-      SubsumeCommon
-      VoidTermCompdata
+      Typelevel.PropEquality
+      Typelevel.SimpleDataKinds
+      Typelevel.SimpleGADTs
+      Typelevel.SimpleSingletons
+      Typelevel.SimpleSingletonsEx01
   other-modules:
       Paths_typelevel_experiments
   hs-source-dirs:
