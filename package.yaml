@@ -24,6 +24,12 @@ dependencies:
 - text
 - singletons
 - decidable
+- deriving-compat
+- containers
+- hashable
+- unordered-containers
+- bound
+- recursion-schemes
 #- list-witnesses
 
 default-extensions:

@@ -26,6 +26,8 @@ source-repository head
 library
   exposed-modules:
       AlmostCompData
+      Bound.DemoBound
+      Bound.Simple
       Impredicative
       PatternSynonyms
       PropEquality
@@ -33,6 +35,8 @@ library
       SimpleGADTs
       SimpleSingletons
       SimpleSingletonsEx01
+      SubsumeCommon
+      VoidTermCompdata
   other-modules:
       Paths_typelevel_experiments
   hs-source-dirs:
@@ -40,9 +44,15 @@ library
   default-extensions: ConstraintKinds DataKinds DefaultSignatures DeriveFunctor DeriveFoldable DeriveTraversable EmptyCase ExistentialQuantification FlexibleContexts FlexibleInstances GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses NoCUSKs NoStarIsType PolyKinds RankNTypes ScopedTypeVariables StandaloneDeriving StandaloneKindSignatures TemplateHaskell TypeApplications TypeFamilies TypeOperators UndecidableInstances
   build-depends:
       base >=4.7 && <5
+    , bound
+    , containers
     , decidable
+    , deriving-compat
+    , hashable
+    , recursion-schemes
     , singletons
     , text
+    , unordered-containers
   default-language: Haskell2010
 
 executable typelevel-experiments-exe
@@ -55,10 +65,16 @@ executable typelevel-experiments-exe
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , bound
+    , containers
     , decidable
+    , deriving-compat
+    , hashable
+    , recursion-schemes
     , singletons
     , text
     , typelevel-experiments
+    , unordered-containers
   default-language: Haskell2010
 
 test-suite typelevel-experiments-test
@@ -72,8 +88,14 @@ test-suite typelevel-experiments-test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , bound
+    , containers
     , decidable
+    , deriving-compat
+    , hashable
+    , recursion-schemes
     , singletons
     , text
     , typelevel-experiments
+    , unordered-containers
   default-language: Haskell2010
