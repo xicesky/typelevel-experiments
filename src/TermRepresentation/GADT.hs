@@ -13,6 +13,7 @@ import Data.Kind (Type)
 import Data.Void
 --import Data.Fix (Fix(..))
 -- import Data.Deriving
+import Text.Show (showListWith)
 import Data.Functor.Const
 import Data.Functor.Classes
 import Data.Functor.Foldable
@@ -33,34 +34,65 @@ type Alg f a = f a -> a
 type VoidF = Const Void
 
 {-----------------------------------------------------------------------------}
-
-data BooleanBOp = BooleanAnd | BooleanOr
-data BooleanUOp = BooleanNot
-data BooleanFlatOp = Conjunction | Disjunction
-
-data Op
-    :: Type -> Type -> Type -> Type -> Type
-    where
-    UnaryOp     :: uop -> rec           -> Op uop bop flop rec
-    BinaryOp    :: bop -> rec -> rec    -> Op uop bop flop rec
-    FlatOp      :: flop -> [rec]        -> Op uop bop flop rec
-
-deriving instance Functor (Op uop bop flop)
-deriving instance Foldable (Op uop bop flop)
-deriving instance Traversable (Op uop bop flop)
+-- Terms
 
 data TermF
     :: (Type -> Type) -> Type -> Type       -- Type parameters
     -> Type                                 -- Recursive term
     -> Type
     where
-    ConstT      ::                  val ->       TermF op val var rec
-    VariableT   ::                  var ->       TermF op val var rec
-    RecT        :: Functor op =>    op rec ->    TermF op val var rec
+    ConstT      ::                  !val ->      TermF op val var rec
+    VariableT   ::                  !var ->      TermF op val var rec
+    RecT        :: ProperRecT op => !(op rec) ->    TermF op val var rec
 
 deriving instance Functor (TermF op val var)
 -- deriving instance Foldable (TermF op val var)
 -- deriving instance Traversable (TermF op val var)
+
+-- I'm going to reget this, am i?
+class (Show1 op, Functor op, Foldable op, Traversable op) => ProperRecT op where
+    -- Something like this
+
+data Op
+    :: Type -> Type -> Type -> Type -> Type
+    where
+    UnaryOp     :: ProperOpTag uop =>   uop -> rec          -> Op uop bop flop rec
+    BinaryOp    :: ProperOpTag bop =>   bop -> rec -> rec   -> Op uop bop flop rec
+    FlatOp      :: ProperOpTag flop =>  flop -> [rec]       -> Op uop bop flop rec
+
+deriving instance Functor (Op uop bop flop)
+deriving instance Foldable (Op uop bop flop)
+deriving instance Traversable (Op uop bop flop)
+
+class (Show o, Eq o, Ord o) => ProperOpTag o where
+    opPrec :: o -> Int
+
+instance ProperOpTag Void where
+    opPrec = absurd
+
+{-----------------------------------------------------------------------------}
+-- Boolean terms
+
+data BooleanUOp = BooleanNot
+    deriving (Show, Eq, Ord)
+data BooleanBOp = BooleanAnd | BooleanOr
+    deriving (Show, Eq, Ord)
+data BooleanFlatOp = BConjunction | BDisjunction
+    deriving (Show, Eq, Ord)
+
+instance ProperOpTag BooleanBOp where
+    opPrec BooleanAnd = 6
+    opPrec BooleanOr = 3
+
+instance ProperOpTag BooleanUOp where
+    opPrec BooleanNot = 10
+
+instance ProperOpTag BooleanFlatOp where
+    opPrec BConjunction = 6
+    opPrec BDisjunction = 3
+
+-- Show1 instance for Op is below
+instance (ProperOpTag a, ProperOpTag b, ProperOpTag c) => ProperRecT (Op a b c)
 
 {-----------------------------------------------------------------------------}
 
@@ -110,80 +142,122 @@ instance Monad (Term op val) where
 
 {-----------------------------------------------------------------------------}
 
-pattern Var :: forall (op :: Type -> Type) val var.
-    var -> Term op val var
 pattern Val :: forall (op :: Type -> Type) val var.
     val -> Term op val var
+pattern Var :: forall (op :: Type -> Type) val var.
+    var -> Term op val var
+pattern Rec :: forall (op :: Type -> Type) val var.
+    () => ProperRecT op
+    => op (Term op val var) -> Term op val var
+
+pattern BUOp
+    :: () => (ProperRecT (Op uop bop flop), ProperOpTag uop)
+    => uop
+    -> Term (Op uop bop flop) val var
+    -> Term (Op uop bop flop) val var
+pattern BBOp
+    :: () => (ProperRecT (Op uop bop flop), ProperOpTag bop)
+    => bop
+    -> Term (Op uop bop flop) val var
+    -> Term (Op uop bop flop) val var
+    -> Term (Op uop bop flop) val var
+pattern BFlOp
+    :: () => (ProperRecT (Op uop bop flop), ProperOpTag flop)
+    => flop
+    -> [Term (Op uop bop flop) val var]
+    -> Term (Op uop bop flop) val var
+
 pattern BNot
-    :: Term (Op BooleanUOp b c) val var 
+    :: () => (ProperRecT (Op BooleanUOp b c), ProperOpTag BooleanUOp)
+    => Term (Op BooleanUOp b c) val var
     -> Term (Op BooleanUOp b c) val var
-pattern BOp
-    :: op
-    -> Term (Op a op c) val var
-    -> Term (Op a op c) val var
-    -> Term (Op a op c) val var
 pattern BAnd
-    :: Term (Op a BooleanBOp c) val var
+    :: () => (ProperRecT (Op a BooleanBOp c), ProperOpTag BooleanBOp)
+    => Term (Op a BooleanBOp c) val var
     -> Term (Op a BooleanBOp c) val var
     -> Term (Op a BooleanBOp c) val var
 pattern BOr
-    :: Term (Op a BooleanBOp c) val var
+    :: () => (ProperRecT (Op a BooleanBOp c), ProperOpTag BooleanBOp)
+    => Term (Op a BooleanBOp c) val var
     -> Term (Op a BooleanBOp c) val var
     -> Term (Op a BooleanBOp c) val var
-pattern BFlop
-    :: flop
-    -> [Term (Op a b flop) val var]
-    -> Term (Op a b flop) val var
 
-pattern Var v       = Fix4 (VariableT v)
 pattern Val v       = Fix4 (ConstT v)
+pattern Var v       = Fix4 (VariableT v)
+pattern Rec v       = Fix4 (RecT v)
+
+pattern BUOp o a    = Fix4 (RecT (UnaryOp o a))
+pattern BBOp o a b  = Fix4 (RecT (BinaryOp o a b))
+pattern BFlOp o xs  = Fix4 (RecT (FlatOp o xs))
+
 pattern BNot a      = Fix4 (RecT (UnaryOp BooleanNot a))
-pattern BOp o a b   = Fix4 (RecT (BinaryOp o a b))
 pattern BAnd a b    = Fix4 (RecT (BinaryOp BooleanAnd a b))
 pattern BOr  a b    = Fix4 (RecT (BinaryOp BooleanOr a b))
-pattern BFlop o xs  = Fix4 (RecT (FlatOp o xs))
+pattern BConj xs    = Fix4 (RecT (FlatOp BConjunction xs))
+pattern BDisj xs    = Fix4 (RecT (FlatOp BDisjunction xs))
 
-{-# COMPLETE Var, Val, BNot, BAnd, BOr #-}
-{-# COMPLETE Var, Val, BNot, BOp #-}
+
+{-# COMPLETE Var, Val, Rec #-}
+{-# COMPLETE Var, Val, BUOp, BBOp, BFlOp #-}
+{-# COMPLETE Var, Val, BNot, BAnd, BOr, BFlOp #-}
+{-# COMPLETE Var, Val, BNot, BAnd, BOr, BConj, BDisj #-}
 
 {-----------------------------------------------------------------------------}
 -- Our show instance will print the expression in forms of patterns
 -- This is contrary to what show usually does, but much easier to use
 
-c_prec :: BooleanBOp -> Int
-c_prec BooleanAnd = 6
-c_prec BooleanOr  = 3
+-- c_prec :: BooleanBOp -> Int
+-- c_prec BooleanAnd = 6
+-- c_prec BooleanOr  = 3
 
-c_pname :: BooleanBOp -> String
-c_pname BooleanAnd = "BAnd"
-c_pname BooleanOr  = "BOr"
+-- c_pname :: BooleanBOp -> String
+-- c_pname BooleanAnd = "BAnd"
+-- c_pname BooleanOr  = "BOr"
 
 --showsOp :: (Int -> Term (Op a b c) val a -> ShowS)
 
--- FIXME: Generalize & use PP
-instance Show val => Show1 (Term (Op BooleanUOp BooleanBOp Void) val) where
+instance Show1 (Op uop bop flop) where
     liftShowsPrec :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS)
-        -> Int -> Term (Op BooleanUOp BooleanBOp Void) val a -> ShowS
+        -> Int -> Op uop bop flop a -> ShowS
+    liftShowsPrec showsRec _ d = let
+        prec :: Int
+        prec = 10   -- same precedence for everyone in show
+        in \case
+        UnaryOp o t     -> showParen (d > prec) $
+            showString (show o ++ " ") . showsRec (prec+1) t
+        BinaryOp o a b  -> showParen (d > prec) $
+            showsRec (prec+1) a . showString (" `" ++ show o ++ "` ") . showsRec (prec+1) b
+        FlatOp o xs     -> showParen (d > prec) $
+            showString (show o ++ " [") . 
+            showListWith (showsRec 0) xs .
+            showString "]"
+
+-- FIXME: Generalize & use PP
+instance Show val => Show1 (Term (Op uop bop flop) val) where
+    liftShowsPrec :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS)
+        -> Int -> Term (Op uop bop flop) val a -> ShowS
     liftShowsPrec showsVar showsList d = let
-        showrec :: Int -> Term (Op BooleanUOp BooleanBOp Void) val a -> ShowS
-        showrec = liftShowsPrec showsVar showsList
+        showsRec :: Int -> Term (Op uop bop flop) val a -> ShowS
+        showsRec = liftShowsPrec showsVar showsList
         prec :: Int
         prec = 10   -- same precedence for everyone
         in \case
         Val v       -> shows v
         Var v       -> showParen (d > prec) $
             showString "Var " . showsVar d v
-        BNot a      -> -- let prec = 10 in
-            showParen (d > prec) $ showString "BNot " . showrec (prec+1) a
-        BOp o a b   -> -- let prec = c_prec o in
-            showParen (d > prec) $
-            showrec (prec+1) a . showString (" `" ++ c_pname o ++ "` ") . showrec (prec+1) b
+        Rec v       -> liftShowsPrec showsRec (showListWith (showsRec 0)) d v
+        -- BNot a      -> -- let prec = 10 in
+        --     showParen (d > prec) $ showString "BNot " . showrec (prec+1) a
+        -- BBOp o a b   -> -- let prec = c_prec o in
+        --     showParen (d > prec) $
+        --     showrec (prec+1) a . showString (" `" ++ c_pname o ++ "` ") . showrec (prec+1) b
 
 instance (Show a, Show val) => Show (Term (Op BooleanUOp BooleanBOp Void) val a) where
     showsPrec = showsPrec1
 
 {-----------------------------------------------------------------------------}
 -- Flattening
+
 
 
 {-----------------------------------------------------------------------------}
@@ -198,25 +272,66 @@ type BTermConstFold' = Term (Op BooleanUOp BooleanBOp Void) Void
 -- Dumb idea? This looks very nice because the Bool gets /factored out/!
 type BooleanValue = Term VoidF Bool Void
 
+-- class GConstantFold f where
+--     -- (Term f Bool a) (Either Bool (Term f Void a))
+--     gsimp :: Alg (TermF f Bool a) (Either Bool (Term f Void a))
+
+-- instance GConstantFold VoidF where
+--     gsimp :: Alg (TermF VoidF Bool a) (Either Bool (Term op Void a))
+--     gsimp (ConstT b)    = Left b
+--     gsimp (VariableT v) = Right $ Var v
+--     gsimp (RecT void)   = absurd (getConst void)
+
+-- instance GConstantFold (Op BooleanUOp Void Void) where
+--     gsimp :: Alg (TermF (Op BooleanUOp Void Void) Bool a)
+--         (Either Bool (Term (Op BooleanUOp bop flop) Void a))
+--     gsimp (RecT (UnaryOp BooleanNot t)) = case t of
+--         Left b      -> Left $ not b
+--         Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
+
+opDispatch
+    :: (Op a Void Void r -> e)
+    -> (Op Void b Void r -> e)
+    -> (Op Void Void c r -> e)
+    ->  Op a b c       r -> e
+opDispatch fUOp fBOp fFlOp = \case
+    UnaryOp o r     -> fUOp (UnaryOp o r)
+    BinaryOp o a b  -> fBOp (BinaryOp o a b)
+    FlatOp o xs     -> fFlOp (FlatOp o xs)
+
+termFDispatch
+    :: (TermF a  Void Void r -> e)
+    -> (TermF VoidF b Void r -> e)
+    -> (TermF VoidF Void c r -> e)
+    -> TermF a b c         r -> e
+termFDispatch fRec fVal fVar = \case
+    ConstT v        -> fVal (ConstT v)
+    VariableT v     -> fVar (VariableT v)
+    RecT op         -> fRec (RecT op)
+
 constantFold :: BTermConstFold a -> Either Bool (BTermConstFold' a)
 constantFold = cata simp where
     simp :: Alg (TermF (Op BooleanUOp BooleanBOp Void) Bool a) (Either Bool (BTermConstFold' a))
-    simp (ConstT b) = Left b
-    simp (VariableT v) = Right $ Var v
-    simp (RecT (UnaryOp BooleanNot t)) = case t of
-        Left b      -> Left $ not b
-        Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
-    simp (RecT (BinaryOp BooleanAnd l r)) = sAnd l r where
-        sAnd (Right a)      (Right b)   = Right $ BAnd a b
-        sAnd (Left True)    rhs         = rhs
-        sAnd (Left False)   _           = Left False
-        sAnd lhs            rhs         = sAnd rhs lhs -- symm.
-    simp (RecT (BinaryOp BooleanOr l r)) = sOr l r where
-        sOr  (Right a)      (Right b)   = Right $ BOr a b
-        sOr  (Left True)    _           = Left True
-        sOr  (Left False)   rhs         = rhs
-        sOr  lhs            rhs         = sOr rhs lhs -- symm.
-    simp (RecT (FlatOp void _)) = absurd void
+    simp = termFDispatch fRec fVal fVar where
+        fVal (ConstT b) = Left b
+        fVal (VariableT v) = absurd v           -- Bug: Redundant, but can't remove it either
+        fVal (RecT o) = absurd (getConst o)     -- Bug: Redundant, but can't remove it either
+
+        fVar (VariableT v) = Right $ Var v
+        fRec (RecT (UnaryOp BooleanNot t)) = case t of
+            Left b      -> Left $ not b
+            Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
+        fRec (RecT (BinaryOp BooleanAnd l r)) = sAnd l r where
+            sAnd (Right a)      (Right b)   = Right $ BAnd a b
+            sAnd (Left True)    rhs         = rhs
+            sAnd (Left False)   _           = Left False
+            sAnd lhs            rhs         = sAnd rhs lhs -- symm.
+        fRec (RecT (BinaryOp BooleanOr l r)) = sOr l r where
+            sOr  (Right a)      (Right b)   = Right $ BOr a b
+            sOr  (Left True)    _           = Left True
+            sOr  (Left False)   rhs         = rhs
+            sOr  lhs            rhs         = sOr rhs lhs -- symm.
+        fRec (RecT (FlatOp void _)) = absurd void
 
 {-----------------------------------------------------------------------------}
 -- Mini logic module
