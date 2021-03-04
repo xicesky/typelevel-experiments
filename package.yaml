@@ -29,6 +29,7 @@ dependencies:
 - hashable
 - unordered-containers
 - bound
+- data-fix
 - recursion-schemes
 #- list-witnesses
 

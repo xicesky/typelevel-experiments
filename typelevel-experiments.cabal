@@ -32,6 +32,7 @@ library
       Compdata.VoidTermCompdata
       Impredicative
       PatternSynonyms
+      TermRepresentation.GADT
       Typelevel.PropEquality
       Typelevel.SimpleDataKinds
       Typelevel.SimpleGADTs
@@ -46,6 +47,7 @@ library
       base >=4.7 && <5
     , bound
     , containers
+    , data-fix
     , decidable
     , deriving-compat
     , hashable
@@ -67,6 +69,7 @@ executable typelevel-experiments-exe
       base >=4.7 && <5
     , bound
     , containers
+    , data-fix
     , decidable
     , deriving-compat
     , hashable
@@ -90,6 +93,7 @@ test-suite typelevel-experiments-test
       base >=4.7 && <5
     , bound
     , containers
+    , data-fix
     , decidable
     , deriving-compat
     , hashable
