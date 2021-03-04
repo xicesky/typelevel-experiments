@@ -13,12 +13,24 @@ import Data.Kind (Type)
 import Data.Void
 --import Data.Fix (Fix(..))
 -- import Data.Deriving
+import Data.Functor.Const
 import Data.Functor.Classes
 import Data.Functor.Foldable
 import Control.Monad (ap)
 
 {-# ANN module "HLint: ignore Use newtype instead of data" #-}
 {-# ANN module "HLint: ignore Use camelCase" #-}
+
+{-----------------------------------------------------------------------------}
+-- Missing bits
+
+-- Why doesn't recusion-schemes define an algebra type?
+-- (probably because there are so many different ones)
+-- We are going to mostly use cata, so here we go
+type Alg f a = f a -> a
+
+-- The ever looming void functor
+type VoidF = Const Void
 
 {-----------------------------------------------------------------------------}
 
@@ -46,85 +58,90 @@ data TermF
     VariableT   ::                  var ->       TermF op val var rec
     RecT        :: Functor op =>    op rec ->    TermF op val var rec
 
-deriving instance Functor (TermF val op var)
--- deriving instance Foldable (TermF val op var)
--- deriving instance Traversable (TermF val op var)
+deriving instance Functor (TermF op val var)
+-- deriving instance Foldable (TermF op val var)
+-- deriving instance Traversable (TermF op val var)
 
 {-----------------------------------------------------------------------------}
 
-newtype Fix f = Fix { unFix :: f (Fix f) }
-newtype Fix2 f a = Fix2 { unFix2 :: f a (Fix2 f a) }
+-- newtype Fix f = Fix { unFix :: f (Fix f) }
+-- newtype Fix2 f a = Fix2 { unFix2 :: f a (Fix2 f a) }
 
 -- This would do exactly what we need
 newtype Fix4 f a b c = Fix4 { unFix4 :: f a b c (Fix4 f a b c) }
 type Term = Fix4 TermF
 
 --type BooleanExpr a = Fix (TermF Bool (Op BooleanUOp BooleanBOp Void) a)
-type BooleanExpr             = Fix2 (TermF (Op BooleanUOp BooleanBOp Void) Bool)
+type BooleanExpr             = Term (Op BooleanUOp BooleanBOp Void) Bool
 
 {-----------------------------------------------------------------------------}
 -- Recursion-schemes base functor
 
-type instance Base (BooleanExpr a) = TermF (Op BooleanUOp BooleanBOp Void) Bool a
+type instance Base (Term op val a) = TermF op val a
 
-instance Recursive (BooleanExpr a) where
-    project :: BooleanExpr a -> TermF (Op BooleanUOp BooleanBOp Void) Bool a (BooleanExpr a)
-    project = unFix2
+instance Recursive (Term op val a) where
+    project :: Term op val a -> TermF op val a (Term op val a)
+    project = unFix4
 
-instance Corecursive (BooleanExpr a) where
-    embed :: TermF (Op BooleanUOp BooleanBOp Void) Bool a (BooleanExpr a) -> BooleanExpr a
-    embed = Fix2
+instance Corecursive (Term op val a) where
+    embed :: TermF op val a (Term op val a) -> Term op val a
+    embed = Fix4
 
 {-----------------------------------------------------------------------------}
 
-instance Functor (Fix2 (TermF val op)) where
-    fmap :: (a -> b) -> Fix2 (TermF val op) a -> Fix2 (TermF val op) b
-    fmap f (Fix2 term) = case term of
-        ConstT x    -> Fix2 $ ConstT x
-        VariableT v -> Fix2 $ VariableT (f v)
-        RecT op     -> Fix2 $ RecT $ (fmap . fmap) f op
+instance Functor (Term op val) where
+    fmap :: (a -> b) -> Term op val a -> Term op val b
+    fmap f (Fix4 term) = case term of
+        ConstT x    -> Fix4 $ ConstT x
+        VariableT v -> Fix4 $ VariableT (f v)
+        RecT op     -> Fix4 $ RecT $ (fmap . fmap) f op
 
-instance Applicative (Fix2 (TermF val op)) where
+instance Applicative (Term op val) where
     pure = return
     (<*>) = ap
 
-instance Monad (Fix2 (TermF val op)) where
-    return :: a -> Fix2 (TermF val op) a
-    return = Fix2 . VariableT
-    (>>=) :: Fix2 (TermF val op) a -> (a -> Fix2 (TermF val op) b) -> Fix2 (TermF val op) b
-    Fix2 (VariableT v)  >>= f   = f v
-    Fix2 (ConstT x)     >>= _   = Fix2 $ ConstT x
-    Fix2 (RecT op)      >>= f   = Fix2 $ RecT $ fmap (>>= f) op
+instance Monad (Term op val) where
+    return :: a -> Term op val a
+    return = Fix4 . VariableT
+    (>>=) :: Term op val a -> (a -> Term op val b) -> Term op val b
+    Fix4 (VariableT v)  >>= f   = f v
+    Fix4 (ConstT x)     >>= _   = Fix4 $ ConstT x
+    Fix4 (RecT op)      >>= f   = Fix4 $ RecT $ fmap (>>= f) op
 
 {-----------------------------------------------------------------------------}
 
 pattern Var :: forall (op :: Type -> Type) val var.
-    var -> Fix2 (TermF op val) var
+    var -> Term op val var
 pattern Val :: forall (op :: Type -> Type) val var.
-    val -> Fix2 (TermF op val) var
+    val -> Term op val var
 pattern BNot
-    :: Fix2 (TermF (Op BooleanUOp b c) val) var 
-    -> Fix2 (TermF (Op BooleanUOp b c) val) var
+    :: Term (Op BooleanUOp b c) val var 
+    -> Term (Op BooleanUOp b c) val var
 pattern BOp
     :: op
-    -> Fix2 (TermF (Op a op c) val) var
-    -> Fix2 (TermF (Op a op c) val) var
-    -> Fix2 (TermF (Op a op c) val) var
+    -> Term (Op a op c) val var
+    -> Term (Op a op c) val var
+    -> Term (Op a op c) val var
 pattern BAnd
-    :: Fix2 (TermF (Op a BooleanBOp c) val) var
-    -> Fix2 (TermF (Op a BooleanBOp c) val) var
-    -> Fix2 (TermF (Op a BooleanBOp c) val) var
+    :: Term (Op a BooleanBOp c) val var
+    -> Term (Op a BooleanBOp c) val var
+    -> Term (Op a BooleanBOp c) val var
 pattern BOr
-    :: Fix2 (TermF (Op a BooleanBOp c) val) var
-    -> Fix2 (TermF (Op a BooleanBOp c) val) var
-    -> Fix2 (TermF (Op a BooleanBOp c) val) var
+    :: Term (Op a BooleanBOp c) val var
+    -> Term (Op a BooleanBOp c) val var
+    -> Term (Op a BooleanBOp c) val var
+pattern BFlop
+    :: flop
+    -> [Term (Op a b flop) val var]
+    -> Term (Op a b flop) val var
 
-pattern Var v       = Fix2 (VariableT v)
-pattern Val v       = Fix2 (ConstT v)
-pattern BNot a      = Fix2 (RecT (UnaryOp BooleanNot a))
-pattern BOp o a b   = Fix2 (RecT (BinaryOp o a b))
-pattern BAnd a b    = Fix2 (RecT (BinaryOp BooleanAnd a b))
-pattern BOr  a b    = Fix2 (RecT (BinaryOp BooleanOr a b))
+pattern Var v       = Fix4 (VariableT v)
+pattern Val v       = Fix4 (ConstT v)
+pattern BNot a      = Fix4 (RecT (UnaryOp BooleanNot a))
+pattern BOp o a b   = Fix4 (RecT (BinaryOp o a b))
+pattern BAnd a b    = Fix4 (RecT (BinaryOp BooleanAnd a b))
+pattern BOr  a b    = Fix4 (RecT (BinaryOp BooleanOr a b))
+pattern BFlop o xs  = Fix4 (RecT (FlatOp o xs))
 
 {-# COMPLETE Var, Val, BNot, BAnd, BOr #-}
 {-# COMPLETE Var, Val, BNot, BOp #-}
@@ -141,15 +158,19 @@ c_pname :: BooleanBOp -> String
 c_pname BooleanAnd = "BAnd"
 c_pname BooleanOr  = "BOr"
 
-instance Show1 BooleanExpr where
-    liftShowsPrec :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS) -> Int -> BooleanExpr a -> ShowS
+--showsOp :: (Int -> Term (Op a b c) val a -> ShowS)
+
+-- FIXME: Generalize & use PP
+instance Show val => Show1 (Term (Op BooleanUOp BooleanBOp Void) val) where
+    liftShowsPrec :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS)
+        -> Int -> Term (Op BooleanUOp BooleanBOp Void) val a -> ShowS
     liftShowsPrec showsVar showsList d = let
-        showrec :: Int -> BooleanExpr a -> ShowS
+        showrec :: Int -> Term (Op BooleanUOp BooleanBOp Void) val a -> ShowS
         showrec = liftShowsPrec showsVar showsList
         prec :: Int
         prec = 10   -- same precedence for everyone
         in \case
-        Val v       -> shows v  -- Bool
+        Val v       -> shows v
         Var v       -> showParen (d > prec) $
             showString "Var " . showsVar d v
         BNot a      -> -- let prec = 10 in
@@ -158,14 +179,44 @@ instance Show1 BooleanExpr where
             showParen (d > prec) $
             showrec (prec+1) a . showString (" `" ++ c_pname o ++ "` ") . showrec (prec+1) b
 
-instance Show a => Show (BooleanExpr a) where
+instance (Show a, Show val) => Show (Term (Op BooleanUOp BooleanBOp Void) val a) where
     showsPrec = showsPrec1
 
 {-----------------------------------------------------------------------------}
+-- Flattening
+
+
+{-----------------------------------------------------------------------------}
 -- Constant folding
+-- This one was called "simplifyPrimitive" in the old version
 
+-- LOCAL TYPE DEFINITION
+-- FIXME: should be generalized to work on conj/disj
+type BTermConstFold = Term (Op BooleanUOp BooleanBOp Void) Bool
+type BTermConstFold' = Term (Op BooleanUOp BooleanBOp Void) Void
 
+-- Dumb idea? This looks very nice because the Bool gets /factored out/!
+type BooleanValue = Term VoidF Bool Void
 
+constantFold :: BTermConstFold a -> Either Bool (BTermConstFold' a)
+constantFold = cata simp where
+    simp :: Alg (TermF (Op BooleanUOp BooleanBOp Void) Bool a) (Either Bool (BTermConstFold' a))
+    simp (ConstT b) = Left b
+    simp (VariableT v) = Right $ Var v
+    simp (RecT (UnaryOp BooleanNot t)) = case t of
+        Left b      -> Left $ not b
+        Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
+    simp (RecT (BinaryOp BooleanAnd l r)) = sAnd l r where
+        sAnd (Right a)      (Right b)   = Right $ BAnd a b
+        sAnd (Left True)    rhs         = rhs
+        sAnd (Left False)   _           = Left False
+        sAnd lhs            rhs         = sAnd rhs lhs -- symm.
+    simp (RecT (BinaryOp BooleanOr l r)) = sOr l r where
+        sOr  (Right a)      (Right b)   = Right $ BOr a b
+        sOr  (Left True)    _           = Left True
+        sOr  (Left False)   rhs         = rhs
+        sOr  lhs            rhs         = sOr rhs lhs -- symm.
+    simp (RecT (FlatOp void _)) = absurd void
 
 {-----------------------------------------------------------------------------}
 -- Mini logic module
@@ -290,3 +341,8 @@ demo2a :: BooleanExpr String
 demo2a = existsUnique [1..3::Int] (\x -> var $ "N" ++ show x)
 demo2b :: BooleanExpr String
 demo2b = existsUnique' [1..3::Int] (\x -> var $ "N" ++ show x)
+
+{-----------------------------------------------------------------------------}
+-- Further ideas
+
+-- https://hackage.haskell.org/package/compdata-0.12.1/docs/Data-Comp-Generic.html
