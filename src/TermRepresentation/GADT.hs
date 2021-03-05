@@ -43,7 +43,7 @@ data TermF
     where
     ConstT      ::                  !val ->      TermF op val var rec
     VariableT   ::                  !var ->      TermF op val var rec
-    RecT        :: ProperRecT op => !(op rec) ->    TermF op val var rec
+    RecT        :: ProperRecT op => !(op rec) -> TermF op val var rec
 
 deriving instance Functor (TermF op val var)
 -- deriving instance Foldable (TermF op val var)
@@ -56,9 +56,9 @@ class (Show1 op, Functor op, Foldable op, Traversable op) => ProperRecT op where
 data Op
     :: Type -> Type -> Type -> Type -> Type
     where
-    UnaryOp     :: ProperOpTag uop =>   uop -> rec          -> Op uop bop flop rec
-    BinaryOp    :: ProperOpTag bop =>   bop -> rec -> rec   -> Op uop bop flop rec
-    FlatOp      :: ProperOpTag flop =>  flop -> [rec]       -> Op uop bop flop rec
+    UnaryOp     :: ProperOpTag uop =>   !uop  -> rec ->         Op uop bop flop rec
+    BinaryOp    :: ProperOpTag bop =>   !bop  -> rec -> rec ->  Op uop bop flop rec
+    FlatOp      :: ProperOpTag flop =>  !flop -> [rec] ->       Op uop bop flop rec
 
 deriving instance Functor (Op uop bop flop)
 deriving instance Foldable (Op uop bop flop)
@@ -94,17 +94,14 @@ instance ProperOpTag BooleanFlatOp where
 -- Show1 instance for Op is below
 instance (ProperOpTag a, ProperOpTag b, ProperOpTag c) => ProperRecT (Op a b c)
 
+type BOps = Op BooleanUOp BooleanBOp Void
+
 {-----------------------------------------------------------------------------}
 
--- newtype Fix f = Fix { unFix :: f (Fix f) }
--- newtype Fix2 f a = Fix2 { unFix2 :: f a (Fix2 f a) }
-
--- This would do exactly what we need
 newtype Fix4 f a b c = Fix4 { unFix4 :: f a b c (Fix4 f a b c) }
 type Term = Fix4 TermF
 
---type BooleanExpr a = Fix (TermF Bool (Op BooleanUOp BooleanBOp Void) a)
-type BooleanExpr             = Term (Op BooleanUOp BooleanBOp Void) Bool
+type BooleanExpr             = Term BOps Bool
 
 {-----------------------------------------------------------------------------}
 -- Recursion-schemes base functor
@@ -193,7 +190,10 @@ pattern BFlOp o xs  = Fix4 (RecT (FlatOp o xs))
 pattern BNot a      = Fix4 (RecT (UnaryOp BooleanNot a))
 pattern BAnd a b    = Fix4 (RecT (BinaryOp BooleanAnd a b))
 pattern BOr  a b    = Fix4 (RecT (BinaryOp BooleanOr a b))
+
+pattern BConj :: () => (ProperRecT (Op a b1 BooleanFlatOp), ProperOpTag BooleanFlatOp) => [Fix4 TermF (Op a b1 BooleanFlatOp) b2 c] -> Fix4 TermF (Op a b1 BooleanFlatOp) b2 c
 pattern BConj xs    = Fix4 (RecT (FlatOp BConjunction xs))
+pattern BDisj :: () => (ProperRecT (Op a b1 BooleanFlatOp), ProperOpTag BooleanFlatOp) => [Fix4 TermF (Op a b1 BooleanFlatOp) b2 c] -> Fix4 TermF (Op a b1 BooleanFlatOp) b2 c
 pattern BDisj xs    = Fix4 (RecT (FlatOp BDisjunction xs))
 
 
@@ -252,7 +252,7 @@ instance Show val => Show1 (Term (Op uop bop flop) val) where
         --     showParen (d > prec) $
         --     showrec (prec+1) a . showString (" `" ++ c_pname o ++ "` ") . showrec (prec+1) b
 
-instance (Show a, Show val) => Show (Term (Op BooleanUOp BooleanBOp Void) val a) where
+instance (Show a, Show val) => Show (Term BOps val a) where
     showsPrec = showsPrec1
 
 {-----------------------------------------------------------------------------}
@@ -266,11 +266,7 @@ instance (Show a, Show val) => Show (Term (Op BooleanUOp BooleanBOp Void) val a)
 
 -- LOCAL TYPE DEFINITION
 -- FIXME: should be generalized to work on conj/disj
-type BTermConstFold = Term (Op BooleanUOp BooleanBOp Void) Bool
-type BTermConstFold' = Term (Op BooleanUOp BooleanBOp Void) Void
 
--- Dumb idea? This looks very nice because the Bool gets /factored out/!
-type BooleanValue = Term VoidF Bool Void
 
 -- class GConstantFold f where
 --     -- (Term f Bool a) (Either Bool (Term f Void a))
@@ -309,31 +305,36 @@ termFDispatch fRec fVal fVar = \case
     VariableT v     -> fVar (VariableT v)
     RecT op         -> fRec (RecT op)
 
-constantFold :: BTermConstFold a -> Either Bool (BTermConstFold' a)
-constantFold = cata simp where
-    simp :: Alg (TermF (Op BooleanUOp BooleanBOp Void) Bool a) (Either Bool (BTermConstFold' a))
-    simp = termFDispatch fRec fVal fVar where
-        fVal :: Alg (TermF VoidF Bool Void) (Either Bool (BTermConstFold' a))
-        fVal (ConstT b) = Left b
+passVar :: Applicative f => Alg (TermF VoidF Void var) (f (Term op val var))
+passVar (VariableT v) = pure $ Var v
 
-        fVar :: Alg (TermF VoidF Void a) (Either Bool (BTermConstFold' a))
-        fVar (VariableT v) = Right $ Var v
+-- Dumb idea? This looks very nice because the Bool gets /factored out/ in the type!
+type BooleanValue = Term VoidF Bool Void
 
-        fRec :: Alg (TermF (Op BooleanUOp BooleanBOp Void) Void Void) (Either Bool (BTermConstFold' a))
-        fRec (RecT (UnaryOp BooleanNot t)) = case t of
+constantFold :: Term BOps Bool a -> Either Bool (Term BOps Void a)
+constantFold = cata $ termFDispatch fRec
+    (\(ConstT b)    -> Left b)
+    passVar
+    where
+    fRec :: Alg (TermF BOps Void Void) (Either Bool (Term BOps Void a))
+    fRec (RecT op) = opDispatch uop bop flop op where
+        uop :: Alg (Op BooleanUOp Void Void) (Either Bool (Term BOps Void a))
+        uop (UnaryOp BooleanNot t) = case t of
             Left b      -> Left $ not b
-            Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
-        fRec (RecT (BinaryOp BooleanAnd l r)) = sAnd l r where
+            Right t'    -> Right $ BNot t'
+        bop :: Alg (Op Void BooleanBOp Void) (Either Bool (Term BOps Void a))
+        bop (BinaryOp BooleanAnd l r) = sAnd l r where
             sAnd (Right a)      (Right b)   = Right $ BAnd a b
             sAnd (Left True)    rhs         = rhs
             sAnd (Left False)   _           = Left False
             sAnd lhs            rhs         = sAnd rhs lhs -- symm.
-        fRec (RecT (BinaryOp BooleanOr l r)) = sOr l r where
+        bop (BinaryOp BooleanOr l r) = sOr l r where
             sOr  (Right a)      (Right b)   = Right $ BOr a b
             sOr  (Left True)    _           = Left True
             sOr  (Left False)   rhs         = rhs
             sOr  lhs            rhs         = sOr rhs lhs -- symm.
-        fRec (RecT (FlatOp void _)) = absurd void
+        flop :: Alg (Op Void Void Void) (Either Bool (Term BOps Void a))
+        flop void = case void of {}
 
 {-----------------------------------------------------------------------------}
 -- Mini logic module
