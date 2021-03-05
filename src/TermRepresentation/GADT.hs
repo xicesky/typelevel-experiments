@@ -313,11 +313,13 @@ constantFold :: BTermConstFold a -> Either Bool (BTermConstFold' a)
 constantFold = cata simp where
     simp :: Alg (TermF (Op BooleanUOp BooleanBOp Void) Bool a) (Either Bool (BTermConstFold' a))
     simp = termFDispatch fRec fVal fVar where
+        fVal :: Alg (TermF VoidF Bool Void) (Either Bool (BTermConstFold' a))
         fVal (ConstT b) = Left b
-        fVal (VariableT v) = absurd v           -- Bug: Redundant, but can't remove it either
-        fVal (RecT o) = absurd (getConst o)     -- Bug: Redundant, but can't remove it either
 
+        fVar :: Alg (TermF VoidF Void a) (Either Bool (BTermConstFold' a))
         fVar (VariableT v) = Right $ Var v
+
+        fRec :: Alg (TermF (Op BooleanUOp BooleanBOp Void) Void Void) (Either Bool (BTermConstFold' a))
         fRec (RecT (UnaryOp BooleanNot t)) = case t of
             Left b      -> Left $ not b
             Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
