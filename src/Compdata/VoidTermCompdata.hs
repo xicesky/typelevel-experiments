@@ -25,7 +25,7 @@ import Data.Kind (Type)
 import Data.Void
 import Data.Foldable
 import Data.Traversable
-import Unsafe.Coerce
+--import Unsafe.Coerce
 
 import Prelude hiding (foldl, foldl1, foldr, foldr1, mapM, sequence)
 
@@ -79,9 +79,9 @@ instance (Functor f) => Monad (Context f) where
               run (Term t) = Term (fmap run t)
 
 instance (Foldable f) => Foldable (Context f) where
-    foldr op c a = run a c
+    foldr op c t = run t c
         where run (Hole a) e = a `op` e
-              run (Term t) e = foldr run e t
+              run (Term t') e = foldr run e t'
 
     foldl op = run
         where run e (Hole a) = e `op` a
@@ -103,16 +103,15 @@ instance (Traversable f) => Traversable (Context f) where
     sequenceA (Term t) = Term <$> traverse sequenceA t
 
     mapM f = run
-        where run (Hole a) = liftM Hole $ f a
-              run (Term t) = liftM Term $ mapM run t
+        where run (Hole a) = Hole <$> f a
+              run (Term t) = Term <$> mapM run t
 
-    sequence (Hole a) = liftM Hole a
-    sequence (Term t) = liftM Term $ mapM sequence t
-
-
+    sequence (Hole a) = Hole <$> a
+    sequence (Term t) = Term <$> mapM sequence t
 
 {-| This function unravels the given term at the topmost layer.  -}
 
 unTerm :: Context f Void -> f (Context f Void)
 {-# INLINE unTerm #-}
 unTerm (Term t) = t
+unTerm (Hole x) = absurd x

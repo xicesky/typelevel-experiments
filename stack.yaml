@@ -53,7 +53,7 @@ extra-deps:
 # extra-package-dbs: []
 
 ghc-options:
-  "$locals": -Wall
+  "$locals": -Wall -fkeep-going
   "$everything": -haddock
 
 # Control whether we use the GHC we find on the path

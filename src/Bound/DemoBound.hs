@@ -1,3 +1,5 @@
+
+{-# OPTIONS_GHC -Wno-unused-imports #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveTraversable #-}
@@ -50,12 +52,22 @@ makeBaseFunctor ''Expr
 type PlainExpr = Expr Bool BNegation BooleanOps
 
 -- Could now be pattern synonyms?
+pattern Var :: var -> Expr val uop bop var
 pattern Var v       = (Variable v)
+pattern Val :: val -> Expr val uop bop var
 pattern Val v       = (Value v)
+pattern BNot :: Expr val BNegation bop var -> Expr val BNegation bop var
 pattern BNot a      = (Unary BooleanNot a)
+pattern BOp :: bop -> Expr val uop bop var -> Expr val uop bop var -> Expr val uop bop var
 pattern BOp o a b   = (Binary o a b)
+pattern BAnd :: Expr val uop BooleanOps var -> Expr val uop BooleanOps var -> Expr val uop BooleanOps var
 pattern BAnd a b    = (Binary BooleanAnd a b)
+pattern BOr :: Expr val uop BooleanOps var -> Expr val uop BooleanOps var -> Expr val uop BooleanOps var
 pattern BOr  a b    = (Binary BooleanOr a b)
+
+{-# COMPLETE Var, Val, BNot, BOp #-}
+{-# COMPLETE Var, Val, BNot, BAnd, BOr #-}
+{-# COMPLETE Var, Val, Unary, BOp #-}
 
 -- instance Show2 (f a b) => Show1 (Fix4 f a b) where
 --     liftShowsPrec1
@@ -92,7 +104,7 @@ instance Applicative (Expr a b c) where
 instance Monad (Expr a b c) where
     return  = Var
     Var a     >>= f     = f a
-    Val b     >>= f     = Val b
+    Val b     >>= _     = Val b
     Unary o e >>= f     = Unary o (e >>= f)
     BOp o x y >>= f     = BOp o (x >>= f) (y >>= f)
 
