@@ -34,16 +34,16 @@ type Alg f a = f a -> a
 type VoidF = Const Void
 
 {-----------------------------------------------------------------------------}
--- Terms
+-- Terms, part 1: Term structure
 
 data TermF
     :: (Type -> Type) -> Type -> Type       -- Type parameters
     -> Type                                 -- Recursive term
     -> Type
     where
-    ConstT      ::                  !val ->      TermF op val var rec
-    VariableT   ::                  !var ->      TermF op val var rec
-    RecT        :: ProperRecT op => !(op rec) -> TermF op val var rec
+    ConstT      ::                  val ->      TermF op val var rec
+    VariableT   ::                  var ->      TermF op val var rec
+    RecT        :: ProperRecT op => op rec ->   TermF op val var rec
 
 deriving instance Functor (TermF op val var)
 -- deriving instance Foldable (TermF op val var)
@@ -53,12 +53,30 @@ deriving instance Functor (TermF op val var)
 class (Show1 op, Functor op, Foldable op, Traversable op) => ProperRecT op where
     -- Something like this
 
+-- Dispatcher, just in case you want to make things more complicated
+termFDispatch
+    :: (TermF a  Void Void r -> e)
+    -> (TermF VoidF b Void r -> e)
+    -> (TermF VoidF Void c r -> e)
+    -> TermF a b c         r -> e
+termFDispatch fRec fVal fVar = \case
+    ConstT v        -> fVal (ConstT v)
+    VariableT v     -> fVar (VariableT v)
+    RecT op         -> fRec (RecT op)
+
+-- Fixpoint
+newtype Fix4 f a b c = Fix4 { unFix4 :: f a b c (Fix4 f a b c) }
+type Term = Fix4 TermF
+
+{-----------------------------------------------------------------------------}
+-- Terms, part 2: Operators
+
 data Op
     :: Type -> Type -> Type -> Type -> Type
     where
-    UnaryOp     :: ProperOpTag uop =>   !uop  -> rec ->         Op uop bop flop rec
-    BinaryOp    :: ProperOpTag bop =>   !bop  -> rec -> rec ->  Op uop bop flop rec
-    FlatOp      :: ProperOpTag flop =>  !flop -> [rec] ->       Op uop bop flop rec
+    UnaryOp     :: ProperOpTag uop =>   uop  -> rec ->         Op uop bop flop rec
+    BinaryOp    :: ProperOpTag bop =>   bop  -> rec -> rec ->  Op uop bop flop rec
+    FlatOp      :: ProperOpTag flop =>  flop -> [rec] ->       Op uop bop flop rec
 
 deriving instance Functor (Op uop bop flop)
 deriving instance Foldable (Op uop bop flop)
@@ -70,8 +88,21 @@ class (Show o, Eq o, Ord o) => ProperOpTag o where
 instance ProperOpTag Void where
     opPrec = absurd
 
+instance (ProperOpTag a, ProperOpTag b, ProperOpTag c) => ProperRecT (Op a b c)
+
+-- Dispatcher, just in case you want to make things more complicated
+opDispatch
+    :: (Op a Void Void r -> e)
+    -> (Op Void b Void r -> e)
+    -> (Op Void Void c r -> e)
+    ->  Op a b c       r -> e
+opDispatch fUOp fBOp fFlOp = \case
+    UnaryOp o r     -> fUOp (UnaryOp o r)
+    BinaryOp o a b  -> fBOp (BinaryOp o a b)
+    FlatOp o xs     -> fFlOp (FlatOp o xs)
+
 {-----------------------------------------------------------------------------}
--- Boolean terms
+-- Specialization to boolean terms
 
 data BooleanUOp = BooleanNot
     deriving (Show, Eq, Ord)
@@ -92,16 +123,12 @@ instance ProperOpTag BooleanFlatOp where
     opPrec BDisjunction = 3
 
 -- Show1 instance for Op is below
-instance (ProperOpTag a, ProperOpTag b, ProperOpTag c) => ProperRecT (Op a b c)
 
 type BOps = Op BooleanUOp BooleanBOp Void
+type AllOps = Op BooleanUOp BooleanBOp BooleanFlatOp
 
-{-----------------------------------------------------------------------------}
-
-newtype Fix4 f a b c = Fix4 { unFix4 :: f a b c (Fix4 f a b c) }
-type Term = Fix4 TermF
-
-type BooleanExpr             = Term BOps Bool
+type BooleanExpr            = Term BOps Bool
+type BooleanExpr'           = Term AllOps Bool
 
 {-----------------------------------------------------------------------------}
 -- Recursion-schemes base functor
@@ -117,6 +144,7 @@ instance Corecursive (Term op val a) where
     embed = Fix4
 
 {-----------------------------------------------------------------------------}
+-- Functor, Applicative and Monad on Variables
 
 instance Functor (Term op val) where
     fmap :: (a -> b) -> Term op val a -> Term op val b
@@ -138,6 +166,7 @@ instance Monad (Term op val) where
     Fix4 (RecT op)      >>= f   = Fix4 $ RecT $ fmap (>>= f) op
 
 {-----------------------------------------------------------------------------}
+-- And a few pattern synonyms for brevity
 
 pattern Val :: forall (op :: Type -> Type) val var.
     val -> Term op val var
@@ -300,94 +329,55 @@ instance (Show var, Show val) => Show (Term BOps val var) where
 
 {-----------------------------------------------------------------------------}
 -- Constant folding
--- This one was called "simplifyPrimitive" in the old version
-
--- LOCAL TYPE DEFINITION
--- FIXME: should be generalized to work on conj/disj
-
-
--- class GConstantFold f where
---     -- (Term f Bool a) (Either Bool (Term f Void a))
---     gsimp :: Alg (TermF f Bool a) (Either Bool (Term f Void a))
-
--- instance GConstantFold VoidF where
---     gsimp :: Alg (TermF VoidF Bool a) (Either Bool (Term op Void a))
---     gsimp (ConstT b)    = Left b
---     gsimp (VariableT v) = Right $ Var v
---     gsimp (RecT void)   = absurd (getConst void)
-
--- instance GConstantFold (Op BooleanUOp Void Void) where
---     gsimp :: Alg (TermF (Op BooleanUOp Void Void) Bool a)
---         (Either Bool (Term (Op BooleanUOp bop flop) Void a))
---     gsimp (RecT (UnaryOp BooleanNot t)) = case t of
---         Left b      -> Left $ not b
---         Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
-
-opDispatch
-    :: (Op a Void Void r -> e)
-    -> (Op Void b Void r -> e)
-    -> (Op Void Void c r -> e)
-    ->  Op a b c       r -> e
-opDispatch fUOp fBOp fFlOp = \case
-    UnaryOp o r     -> fUOp (UnaryOp o r)
-    BinaryOp o a b  -> fBOp (BinaryOp o a b)
-    FlatOp o xs     -> fFlOp (FlatOp o xs)
-
-termFDispatch
-    :: (TermF a  Void Void r -> e)
-    -> (TermF VoidF b Void r -> e)
-    -> (TermF VoidF Void c r -> e)
-    -> TermF a b c         r -> e
-termFDispatch fRec fVal fVar = \case
-    ConstT v        -> fVal (ConstT v)
-    VariableT v     -> fVar (VariableT v)
-    RecT op         -> fRec (RecT op)
-
-passVar :: Applicative f => Alg (TermF VoidF Void var) (f (Term op val var))
-passVar (VariableT v) = pure $ Var v
+-- This function was once called "simplifyPrimitive"
 
 -- Dumb idea? This looks very nice because the Bool gets /factored out/ in the type!
 type BooleanValue = Term VoidF Bool Void
 
-constantFold :: Term BOps Bool a -> Either Bool (Term BOps Void a)
-constantFold = cata $ termFDispatch fRec
-    (\(ConstT b)    -> Left b)
-    passVar
+-- FIXME: should be generalized to work on conj/disj
+constantFold' :: Term BOps Bool a -> Either Bool (Term BOps Void a)
+constantFold' = cata $ termFDispatch fRec
+    (\(ConstT b) -> Left b)
+    (\(VariableT v) -> Right $ Var v)
     where
-    fRec :: Alg (TermF BOps Void Void) (Either Bool (Term BOps Void a))
-    fRec (RecT op) = opDispatch uop bop flop op where
-        uop :: Alg (Op BooleanUOp Void Void) (Either Bool (Term BOps Void a))
-        uop (UnaryOp BooleanNot t) = case t of
-            Left b      -> Left $ not b
-            Right t'    -> Right $ BNot t'
-        bop :: Alg (Op Void BooleanBOp Void) (Either Bool (Term BOps Void a))
-        bop (BinaryOp BooleanAnd l r) = sAnd l r where
-            sAnd (Right a)      (Right b)   = Right $ BAnd a b
-            sAnd (Left True)    rhs         = rhs
-            sAnd (Left False)   _           = Left False
-            sAnd lhs            rhs         = sAnd rhs lhs -- symm.
-        bop (BinaryOp BooleanOr l r) = sOr l r where
-            sOr  (Right a)      (Right b)   = Right $ BOr a b
-            sOr  (Left True)    _           = Left True
-            sOr  (Left False)   rhs         = rhs
-            sOr  lhs            rhs         = sOr rhs lhs -- symm.
-        flop :: Alg (Op Void Void Void) (Either Bool (Term BOps Void a))
-        flop void = case void of {}
-
-class CF uop bop flop val var where
-    cf :: Term (Op uop bop flop) val var -> Either Bool (Term (Op uop bop flop) Void var)
-    cfF :: Alg (TermF (Op uop bop flop) val var) (Either Bool (Term (Op uop bop flop) Void var))
-
-class CFUOp uop where
-    cfUOp :: Alg (TermF (Op uop Void Void) Void Void) (Either Bool (Term (Op uop Void Void) Void Void))
-
-instance CFUOp Void where
-    cfUOp t = case t of {}
-
-instance CFUOp BooleanUOp where
-    cfUOp (RecT (UnaryOp BooleanNot t)) = case t of
+    fRec :: Alg (TermF (Op BooleanUOp BooleanBOp Void) Void Void) (Either Bool (Term BOps Void a))
+    fRec (ConstT x) = absurd x
+    fRec (VariableT x) = absurd x
+    fRec (RecT (UnaryOp BooleanNot t)) = case t of
         Left b      -> Left $ not b
-        Right t'    -> Right $ BNot t'
+        Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
+    fRec (RecT (BinaryOp BooleanAnd l r)) = sAnd l r where
+        sAnd (Right a)      (Right b)   = Right $ BAnd a b
+        sAnd (Left True)    rhs         = rhs
+        sAnd (Left False)   _           = Left False
+        sAnd lhs            rhs         = sAnd rhs lhs -- symm.
+    fRec (RecT (BinaryOp BooleanOr l r)) = sOr l r where
+        sOr  (Right a)      (Right b)   = Right $ BOr a b
+        sOr  (Left True)    _           = Left True
+        sOr  (Left False)   rhs         = rhs
+        sOr  lhs            rhs         = sOr rhs lhs -- symm.
+    fRec (RecT (FlatOp void _)) = absurd void
+
+-- Generalized to arbitrary inputs
+constantFold :: (t :<: Term BOps Bool a) => t -> Either Bool (Term BOps Void a)
+constantFold = constantFold' . inject
+
+{-  FIXME: Output type!
+
+The remaining problem is that we have not proven that constantFold will preserve operations:
+It will only produce BooleanBOps if we pass in BooleanBOps, and the same is true for FlatOps
+and UnaryOps. We basically have a "set" of functions:
+    ∀ uop ∈ {Void, BooleanUOp}, ∀ bop ∈ {Void, BooleanBOp}, ∀ flop ∈ {Void, BooleanFlOp}
+    constantFold' :: Term (Op uop bop flop) Bool a -> Either Bool (Term (Op uop bop flop) Void a)
+And now we would like to "pattern match on the types" because there are only 2 choices for
+each. (This has to be possible using classes and maybe some additional constraint on the types!)
+-}
+
+{-----------------------------------------------------------------------------}
+-- Renaming variables is easy now?
+
+renameVars :: (a -> b) -> Term op val a -> Term op val b
+renameVars = fmap
 
 {-----------------------------------------------------------------------------}
 -- Mini logic module
