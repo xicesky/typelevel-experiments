@@ -203,6 +203,44 @@ pattern BDisj xs    = Fix4 (RecT (FlatOp BDisjunction xs))
 {-# COMPLETE Var, Val, BNot, BAnd, BOr, BConj, BDisj #-}
 
 {-----------------------------------------------------------------------------}
+-- We still need some kind of injectivity constraint
+
+class (:<:) s t where
+    inject :: s -> t
+
+instance Void :<: a where
+    inject = absurd
+
+-- Overlap? No?
+instance a :<: a where
+    inject = id
+
+class (:<<:) s t where
+    inject1 :: s a -> t a
+
+instance (uop :<: uop', bop :<: bop', flop :<: flop'
+    , ProperOpTag uop', ProperOpTag bop', ProperOpTag flop'
+    )
+    => Op uop bop flop :<<: Op uop' bop' flop' where
+    inject1 (UnaryOp o t) = UnaryOp (inject o) t
+    inject1 (BinaryOp o t1 t2) = BinaryOp (inject o) t1 t2
+    inject1 (FlatOp o t) = FlatOp (inject o) t
+
+instance (op :<<: op', val :<: val', var :<: var'
+    , ProperRecT op'
+    )
+    => TermF op val var :<<: TermF op' val' var' where
+    inject1 (ConstT v) = ConstT (inject v)
+    inject1 (VariableT v) = VariableT (inject v)
+    inject1 (RecT t) = RecT (inject1 t)
+
+-- This is going to be a hard sell
+-- newtype Fix4 f a b c = Fix4 { unFix4 :: f a b c (Fix4 f a b c) }
+instance (Functor (f a b c), f a b c :<<: f a' b' c')
+    => Fix4 f a b c :<: Fix4 f a' b' c' where
+    inject (Fix4 f) = (Fix4 . inject1 . fmap inject) f
+
+{-----------------------------------------------------------------------------}
 -- Our show instance will print the expression in forms of patterns
 -- This is contrary to what show usually does, but much easier to use
 
@@ -252,7 +290,7 @@ instance Show val => Show1 (Term (Op uop bop flop) val) where
         --     showParen (d > prec) $
         --     showrec (prec+1) a . showString (" `" ++ c_pname o ++ "` ") . showrec (prec+1) b
 
-instance (Show a, Show val) => Show (Term BOps val a) where
+instance (Show var, Show val) => Show (Term BOps val var) where
     showsPrec = showsPrec1
 
 {-----------------------------------------------------------------------------}
@@ -335,6 +373,21 @@ constantFold = cata $ termFDispatch fRec
             sOr  lhs            rhs         = sOr rhs lhs -- symm.
         flop :: Alg (Op Void Void Void) (Either Bool (Term BOps Void a))
         flop void = case void of {}
+
+class CF uop bop flop val var where
+    cf :: Term (Op uop bop flop) val var -> Either Bool (Term (Op uop bop flop) Void var)
+    cfF :: Alg (TermF (Op uop bop flop) val var) (Either Bool (Term (Op uop bop flop) Void var))
+
+class CFUOp uop where
+    cfUOp :: Alg (TermF (Op uop Void Void) Void Void) (Either Bool (Term (Op uop Void Void) Void Void))
+
+instance CFUOp Void where
+    cfUOp t = case t of {}
+
+instance CFUOp BooleanUOp where
+    cfUOp (RecT (UnaryOp BooleanNot t)) = case t of
+        Left b      -> Left $ not b
+        Right t'    -> Right $ BNot t'
 
 {-----------------------------------------------------------------------------}
 -- Mini logic module

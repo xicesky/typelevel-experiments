@@ -34,6 +34,7 @@ library
       PatternSynonyms
       TermRepresentation.GADT
       TermRepresentation.VoidParam
+      TypeFamilyClasses
       Typelevel.PropEquality
       Typelevel.SimpleDataKinds
       Typelevel.SimpleGADTs
