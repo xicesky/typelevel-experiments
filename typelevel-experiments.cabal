@@ -32,6 +32,7 @@ library
       Compdata.VoidTermCompdata
       Impredicative
       PatternSynonyms
+      TermRepresentation.FindInjection
       TermRepresentation.GADT
       TermRepresentation.Proof
       TermRepresentation.VoidParam

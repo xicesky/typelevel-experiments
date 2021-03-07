@@ -9,8 +9,10 @@ module TermRepresentation.GADT where
 import Prelude hiding (and, or, not, (&&), (||))
 import qualified Prelude as P
 
+import GHC.TypeLits
 import Data.Kind (Type)
 import Data.Void
+import Data.Proxy
 --import Data.Fix (Fix(..))
 -- import Data.Deriving
 import Text.Show (showListWith)
@@ -54,6 +56,7 @@ class (Show1 op, Functor op, Foldable op, Traversable op) => ProperRecT op where
     -- Something like this
 
 -- Dispatcher, just in case you want to make things more complicated
+-- FIXME: remove, it's useles
 termFDispatch
     :: (TermF a  Void Void r -> e)
     -> (TermF VoidF b Void r -> e)
@@ -91,6 +94,7 @@ instance ProperOpTag Void where
 instance (ProperOpTag a, ProperOpTag b, ProperOpTag c) => ProperRecT (Op a b c)
 
 -- Dispatcher, just in case you want to make things more complicated
+-- FIXME: remove, it's useles
 opDispatch
     :: (Op a Void Void r -> e)
     -> (Op Void b Void r -> e)
@@ -234,58 +238,110 @@ pattern BDisj xs    = Fix4 (RecT (FlatOp BDisjunction xs))
 {-----------------------------------------------------------------------------}
 -- We still need some kind of injectivity constraint
 
-{- FIXME: (:<:) needs a witness to guide injection.
-    on ghci, try: constantFold demo2b
+data Injection
+    = IHere
+    | IVoid     -- annoying special case for Void
+    | IBoth Injection Injection
+    | IDeconstruct [Injection]
+    | ILift1 Injection
+
+{- | Find an injection s -> t
+
+This type family has to be closed to not cause conflicts (because of Fix4).
 -}
+type family FindInjection s t :: Injection where
+    FindInjection a a       = 'IHere
+    FindInjection Void a    = 'IVoid
+    FindInjection (Fix4 f a b c) (Fix4 f a' b' c')
+                            = 'ILift1 (FindInjection1 (f a b c) (f a' b' c'))
+    FindInjection Bool (Term op Bool var)       -- special rule #1: Bool to Term
+                            = 'IHere
+    FindInjection (Either a b) c                -- special rule #2: Either
+                            = 'IBoth (FindInjection a c) (FindInjection b c)
+    FindInjection x y       = TypeError
+        (       'Text "Could not find an injection from "
+        ':$$:   'Text "\t" ':<>: 'ShowType x
+        ':$$:   'Text "to"
+        ':$$:   'Text "\t" ':<>: 'ShowType y
+        )
 
-class (:<:) s t where
-    inject :: s -> t
+{- | Find an injection s a -> t a
 
-instance Void :<: a where
-    inject = absurd
+This type family could be open to allow different implementations of Op.
+-}
+type family FindInjection1 (s :: Type -> Type) (t :: Type -> Type) :: Injection where
+    FindInjection1 (Op uop bop flop) (Op uop' bop' flop')
+        = 'IDeconstruct
+        [   FindInjection uop uop'
+        ,   FindInjection bop bop'
+        ,   FindInjection flop flop'
+        ]
+    FindInjection1 (TermF op val var) (TermF op' val' var')
+        = 'IDeconstruct
+        [   FindInjection1 op op'
+        ,   FindInjection val val'
+        ,   FindInjection var var'
+        ]
 
--- Overlap? No?
-instance a :<: a where
-    inject = id
+class GInject s t (i :: Injection) where
+    gInject :: Proxy i -> s -> t
 
-class (:<<:) s t where
-    inject1 :: s a -> t a
+instance GInject a a 'IHere where
+    gInject _ = id
 
-instance (uop :<: uop', bop :<: bop', flop :<: flop'
+instance GInject Void a 'IVoid where
+    gInject _ = absurd
+
+class GInject1 s t (i :: Injection) where
+    gInject1 :: Proxy i -> s a -> t a
+
+instance (GInject uop uop' ia, GInject bop bop' ib, GInject flop flop' ic
     , ProperOpTag uop', ProperOpTag bop', ProperOpTag flop'
     )
-    => Op uop bop flop :<<: Op uop' bop' flop' where
-    inject1 (UnaryOp o t) = UnaryOp (inject o) t
-    inject1 (BinaryOp o t1 t2) = BinaryOp (inject o) t1 t2
-    inject1 (FlatOp o t) = FlatOp (inject o) t
+    => GInject1 (Op uop bop flop) (Op uop' bop' flop') ('IDeconstruct [ia, ib, ic]) where
+    gInject1 _ (UnaryOp o t) = UnaryOp (gInject @uop @uop' @ia Proxy o) t
+    gInject1 _ (BinaryOp o t1 t2) = BinaryOp (gInject @bop @bop' @ib Proxy o) t1 t2
+    gInject1 _ (FlatOp o t) = FlatOp (gInject @flop @flop' @ic Proxy o) t
 
-instance (op :<<: op', val :<: val', var :<: var'
+instance (GInject1 op op' ia, GInject val val' ib, GInject var var' ic
     , ProperRecT op'
     )
-    => TermF op val var :<<: TermF op' val' var' where
-    inject1 (ConstT v) = ConstT (inject v)
-    inject1 (VariableT v) = VariableT (inject v)
-    inject1 (RecT t) = RecT (inject1 t)
+    => GInject1 (TermF op val var) (TermF op' val' var') ('IDeconstruct [ia, ib, ic]) where
+    gInject1 _ (RecT t) = RecT (gInject1 @op @op' @ia Proxy t)
+    gInject1 _ (ConstT v) = ConstT (gInject @val @val' @ib Proxy v)
+    gInject1 _ (VariableT v) = VariableT (gInject @var @var' @ic Proxy v)
 
--- This is going to be a hard sell
--- newtype Fix4 f a b c = Fix4 { unFix4 :: f a b c (Fix4 f a b c) }
-instance (Functor (f a b c), f a b c :<<: f a' b' c')
-    => Fix4 f a b c :<: Fix4 f a' b' c' where
-    inject (Fix4 f) = (Fix4 . inject1 . fmap inject) f
+instance (Functor (f a b c), GInject1 (f a b c) (f a' b' c') i)
+    => GInject (Fix4 f a b c) (Fix4 f a' b' c') ('ILift1 i) where
+    gInject _ = go where
+        go (Fix4 f) = (Fix4
+            . gInject1 @(f a b c) @(f a' b' c') @i Proxy
+            . fmap go
+            ) f
+
+-- FindInjection Bool (Term op Bool var)       -- special rule #1: Bool to Term
+--                         = 'IHere
+-- FindInjection (Either a b) c                -- special rule #2: Either
+--                         = 'IBoth (FindInjection a c) (FindInjection b c)
+
+-- special rule #1: Bool to Term
+instance GInject Bool (Term op Bool var) 'IHere where
+    gInject _ = Val
+
+-- special rule #2: Either
+instance (GInject a c l, GInject b c r)
+    => GInject (Either a b) c ('IBoth l r) where
+    gInject _ (Left v)  = gInject @a @c @l Proxy v
+    gInject _ (Right v) = gInject @b @c @r Proxy v
+
+type (s :<: t) = (GInject s t (FindInjection s t))
+
+inject :: forall s t. (s :<: t) => s -> t
+inject = gInject @s @t @(FindInjection s t) Proxy
 
 {-----------------------------------------------------------------------------}
 -- Our show instance will print the expression in forms of patterns
 -- This is contrary to what show usually does, but much easier to use
-
--- c_prec :: BooleanBOp -> Int
--- c_prec BooleanAnd = 6
--- c_prec BooleanOr  = 3
-
--- c_pname :: BooleanBOp -> String
--- c_pname BooleanAnd = "BAnd"
--- c_pname BooleanOr  = "BOr"
-
---showsOp :: (Int -> Term (Op a b c) val a -> ShowS)
 
 instance Show1 (Op uop bop flop) where
     liftShowsPrec :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS)
@@ -299,7 +355,7 @@ instance Show1 (Op uop bop flop) where
         BinaryOp o a b  -> showParen (d > prec) $
             showsRec (prec+1) a . showString (" `" ++ show o ++ "` ") . showsRec (prec+1) b
         FlatOp o xs     -> showParen (d > prec) $
-            showString (show o ++ " [") . 
+            showString (show o ++ " [") .
             showListWith (showsRec 0) xs .
             showString "]"
 
@@ -349,6 +405,16 @@ flatten' = cata flat where
         (lhs    , BDisj r)  -> BDisj (lhs : r)
         (lhs    , rhs    )  -> BDisj [lhs, rhs]
     flat (RecT (FlatOp op _)) = absurd op
+
+{- | 'flatten'' Generalized to arbitrary inputs.
+
+Sometimes GHC will try to fix 'val' and 'var' to arbitrary types. You can avoid
+that by using type applications, e.g.:
+
+>>> flatten @Bool @String $ constantFold demo2b
+-}
+flatten :: forall val var t. (t :<: Term BOps val var) => t -> Term BFlOps val var
+flatten = flatten' . inject
 
 {-----------------------------------------------------------------------------}
 -- Constant folding
