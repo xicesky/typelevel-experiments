@@ -125,10 +125,10 @@ instance ProperOpTag BooleanFlatOp where
 -- Show1 instance for Op is below
 
 type BOps = Op BooleanUOp BooleanBOp Void
-type AllOps = Op BooleanUOp BooleanBOp BooleanFlatOp
+type BFlOps = Op BooleanUOp Void BooleanFlatOp
 
 type BooleanExpr            = Term BOps Bool
-type BooleanExpr'           = Term AllOps Bool
+type BooleanExprFlat        = Term BFlOps Bool
 
 {-----------------------------------------------------------------------------}
 -- Recursion-schemes base functor
@@ -234,6 +234,10 @@ pattern BDisj xs    = Fix4 (RecT (FlatOp BDisjunction xs))
 {-----------------------------------------------------------------------------}
 -- We still need some kind of injectivity constraint
 
+{- FIXME: (:<:) needs a witness to guide injection.
+    on ghci, try: constantFold demo2b
+-}
+
 class (:<:) s t where
     inject :: s -> t
 
@@ -319,13 +323,32 @@ instance Show val => Show1 (Term (Op uop bop flop) val) where
         --     showParen (d > prec) $
         --     showrec (prec+1) a . showString (" `" ++ c_pname o ++ "` ") . showrec (prec+1) b
 
-instance (Show var, Show val) => Show (Term BOps val var) where
+-- instance (Show var, Show val) => Show (Term BOps val var) where
+--     showsPrec = showsPrec1
+
+instance (Show var, Show1 (Term (Op uop bop flop) val)) => Show (Term (Op uop bop flop) val var) where
     showsPrec = showsPrec1
 
 {-----------------------------------------------------------------------------}
 -- Flattening
 
-
+flatten' :: Term BOps val var -> Term BFlOps val var
+flatten' = cata flat where
+    flat :: Alg (TermF BOps val var) (Term BFlOps val var)
+    flat (ConstT v) = Val v
+    flat (VariableT v) = Var v
+    flat (RecT (UnaryOp BooleanNot t)) = BNot t
+    flat (RecT (BinaryOp BooleanAnd a b)) = case (a, b) of
+        (BConj l, BConj r)  -> BConj (l ++ r)
+        (BConj l, rhs    )  -> BConj (l ++ [rhs])
+        (lhs    , BConj r)  -> BConj (lhs : r)
+        (lhs    , rhs    )  -> BConj [lhs, rhs]
+    flat (RecT (BinaryOp BooleanOr a b)) = case (a, b) of
+        (BDisj l, BDisj r)  -> BDisj (l ++ r)
+        (BDisj l, rhs    )  -> BDisj (l ++ [rhs])
+        (lhs    , BDisj r)  -> BDisj (lhs : r)
+        (lhs    , rhs    )  -> BDisj [lhs, rhs]
+    flat (RecT (FlatOp op _)) = absurd op
 
 {-----------------------------------------------------------------------------}
 -- Constant folding
@@ -334,7 +357,10 @@ instance (Show var, Show val) => Show (Term BOps val var) where
 -- Dumb idea? This looks very nice because the Bool gets /factored out/ in the type!
 type BooleanValue = Term VoidF Bool Void
 
--- FIXME: should be generalized to work on conj/disj
+{- | Fold constants in a term.
+
+TODO: Create a version that works on flattened terms.
+-}
 constantFold' :: Term BOps Bool a -> Either Bool (Term BOps Void a)
 constantFold' = cata $ termFDispatch fRec
     (\(ConstT b) -> Left b)
@@ -359,19 +385,8 @@ constantFold' = cata $ termFDispatch fRec
     fRec (RecT (FlatOp void _)) = absurd void
 
 -- Generalized to arbitrary inputs
-constantFold :: (t :<: Term BOps Bool a) => t -> Either Bool (Term BOps Void a)
+constantFold :: (t a :<: Term BOps Bool a) => t a -> Either Bool (Term BOps Void a)
 constantFold = constantFold' . inject
-
-{-  FIXME: Output type!
-
-The remaining problem is that we have not proven that constantFold will preserve operations:
-It will only produce BooleanBOps if we pass in BooleanBOps, and the same is true for FlatOps
-and UnaryOps. We basically have a "set" of functions:
-    ∀ uop ∈ {Void, BooleanUOp}, ∀ bop ∈ {Void, BooleanBOp}, ∀ flop ∈ {Void, BooleanFlOp}
-    constantFold' :: Term (Op uop bop flop) Bool a -> Either Bool (Term (Op uop bop flop) Void a)
-And now we would like to "pattern match on the types" because there are only 2 choices for
-each. (This has to be possible using classes and maybe some additional constraint on the types!)
--}
 
 {-----------------------------------------------------------------------------}
 -- Renaming variables is easy now?
