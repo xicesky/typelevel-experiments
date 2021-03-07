@@ -41,9 +41,9 @@ data TermF
     -> Type                                 -- Recursive term
     -> Type
     where
-    ConstT      ::                  !val ->      TermF op val var rec
-    VariableT   ::                  !var ->      TermF op val var rec
-    RecT        :: ProperRecT op => !(op rec) -> TermF op val var rec
+    ConstT      ::                  val ->      TermF op val var rec
+    VariableT   ::                  var ->      TermF op val var rec
+    RecT        :: ProperRecT op => op rec ->   TermF op val var rec
 
 deriving instance Functor (TermF op val var)
 -- deriving instance Foldable (TermF op val var)
@@ -74,9 +74,9 @@ type Term = Fix4 TermF
 data Op
     :: Type -> Type -> Type -> Type -> Type
     where
-    UnaryOp     :: ProperOpTag uop =>   !uop  -> rec ->         Op uop bop flop rec
-    BinaryOp    :: ProperOpTag bop =>   !bop  -> rec -> rec ->  Op uop bop flop rec
-    FlatOp      :: ProperOpTag flop =>  !flop -> [rec] ->       Op uop bop flop rec
+    UnaryOp     :: ProperOpTag uop =>   uop  -> rec ->         Op uop bop flop rec
+    BinaryOp    :: ProperOpTag bop =>   bop  -> rec -> rec ->  Op uop bop flop rec
+    FlatOp      :: ProperOpTag flop =>  flop -> [rec] ->       Op uop bop flop rec
 
 deriving instance Functor (Op uop bop flop)
 deriving instance Foldable (Op uop bop flop)
@@ -341,6 +341,8 @@ constantFold' = cata $ termFDispatch fRec
     (\(VariableT v) -> Right $ Var v)
     where
     fRec :: Alg (TermF (Op BooleanUOp BooleanBOp Void) Void Void) (Either Bool (Term BOps Void a))
+    fRec (ConstT x) = absurd x
+    fRec (VariableT x) = absurd x
     fRec (RecT (UnaryOp BooleanNot t)) = case t of
         Left b      -> Left $ not b
         Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
@@ -354,6 +356,7 @@ constantFold' = cata $ termFDispatch fRec
         sOr  (Left True)    _           = Left True
         sOr  (Left False)   rhs         = rhs
         sOr  lhs            rhs         = sOr rhs lhs -- symm.
+    fRec (RecT (FlatOp void _)) = absurd void
 
 -- Generalized to arbitrary inputs
 constantFold :: (t :<: Term BOps Bool a) => t -> Either Bool (Term BOps Void a)
@@ -369,70 +372,6 @@ and UnaryOps. We basically have a "set" of functions:
 And now we would like to "pattern match on the types" because there are only 2 choices for
 each. (This has to be possible using classes and maybe some additional constraint on the types!)
 -}
-
--- V for Vendetta!
-type V = Void
-
-class (ProperOpTag u, ProperOpTag b, ProperOpTag f) => GConstantFold u b f where
-    gConstantFold :: Term (Op u b f) Bool a -> Either Bool (Term (Op u b f) Void a)
-    gConstantFold = cata gCFAlg'
-
-    gCFAlg' :: Alg (TermF (Op u b f) Bool a) (Either Bool (Term (Op u b f) Void a))
-    gCFAlg' (ConstT x) = Left x
-    gCFAlg' (VariableT x) = Right $ Var x
-    gCFAlg' (RecT x) = gCFAlg (RecT x)
-
-    -- formerly known as fRec
-    gCFAlg :: Alg (TermF (Op u b f) Void Void) (Either Bool (Term (Op u b f) Void a))
-    gCFAlg (RecT x) = gCFAlgOp x
-
-    -- !! This is to restrictive
-    -- There is constaint on "Term (Op ...)" part, but we don't absolutely need
-    -- u, b and f to be equal to the ones in op.
-    -- This can't really work, because we can't express that only one of the three
-    -- has to match - or is there a trick that i am missing?
-    -- Maybe we can provide a GADT proof that "u~u'|b~b'|f~f'"?
-    gCFAlgOp :: Op u b f (Either Bool (Term (Op u b f) Void a)) -> Either Bool (Term (Op u b f) Void a)
-
--- AAAARGH OVERLAP
-instance {-# OVERLAPPABLE #-}
-    (   ProperOpTag u, ProperOpTag b, ProperOpTag f -- not sure why i need those 3
-    ,   GConstantFold u Void Void
-    ,   GConstantFold Void b Void
-    ,   GConstantFold Void Void f
-    ) => GConstantFold u b f where
-    -- gCFAlg :: Alg (TermF (Op uop bop flop) Void Void) (Either Bool (Term (Op uop bop flop) Void a))
-    -- gCFAlg (RecT x) =
-
-    gCFAlgOp :: Op u b f (Either Bool (Term (Op u b f) Void a)) -> Either Bool (Term (Op u b f) Void a)
-    gCFAlgOp = opDispatch o1 o2 o3 where
-        o1 :: Op u V V (Either Bool (Term (Op u b f) Void a)) -> Either Bool (Term (Op u b f) Void a)
-        o1 = gCFAlgOp
-        o2 :: Op V b V (Either Bool (Term (Op u b f) Void a)) -> Either Bool (Term (Op u b f) Void a)
-        o2 = gCFAlgOp
-        o3 :: Op V V f (Either Bool (Term (Op u b f) Void a)) -> Either Bool (Term (Op u b f) Void a)
-        o3 = gCFAlgOp
-
-instance GConstantFold BooleanUOp Void Void where
-    --gCFAlg :: Alg (TermF (Op BooleanUOp Void Void) Void Void) (Either Bool (Term (Op BooleanUOp Void Void) Void a))
-    gCFAlgOp :: (ProperOpTag b, ProperOpTag f)
-        => Op BooleanUOp V V (Either Bool (Term (Op BooleanUOp b f) Void a)) -> Either Bool (Term (Op BooleanUOp b f) Void a)
-    gCFAlgOp (UnaryOp BooleanNot t) = case t of
-        Left b      -> Left $ not b
-        Right t'    -> Right $ BNot t'
-
-instance GConstantFold Void BooleanBOp Void where
-    --gCFAlg :: Alg (TermF (Op Void BooleanBOp Void) Bool a) (Either Bool (Term (Op Void BooleanBOp Void) Void a))
-    gCFAlgOp (BinaryOp BooleanAnd l r) = sAnd l r where
-        sAnd (Right a)      (Right b)   = Right $ BAnd a b
-        sAnd (Left True)    rhs         = rhs
-        sAnd (Left False)   _           = Left False
-        sAnd lhs            rhs         = sAnd rhs lhs -- symm.
-    gCFAlgOp (BinaryOp BooleanOr l r) = sOr l r where
-        sOr  (Right a)      (Right b)   = Right $ BOr a b
-        sOr  (Left True)    _           = Left True
-        sOr  (Left False)   rhs         = rhs
-        sOr  lhs            rhs         = sOr rhs lhs -- symm.
 
 {-----------------------------------------------------------------------------}
 -- Renaming variables is easy now?
