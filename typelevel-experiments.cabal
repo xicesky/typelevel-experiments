@@ -33,6 +33,7 @@ library
       Impredicative
       PatternSynonyms
       TermRepresentation.GADT
+      TermRepresentation.Proof
       TermRepresentation.VoidParam
       TypeFamilyClasses
       Typelevel.PropEquality

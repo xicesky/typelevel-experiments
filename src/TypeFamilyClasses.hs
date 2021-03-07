@@ -157,3 +157,84 @@ instance IntegralCompare Int
 instance IntegralCompare Integer
 --instance IntegralCompare Bool       -- error: Bool is not integral
 
+{-----------------------------------------------------------------------------}
+-- The fun part
+
+type family Result f :: Type where
+    Result (s -> r) = Result r
+    Result r = r
+
+data ResultWitness = End | Step ResultWitness
+
+type family Result' f :: ResultWitness where
+    Result' (s -> m) = 'Step (Result' m)
+    Result' r = 'End
+
+class ResultE f r (w :: ResultWitness) where
+    mkConstE :: Proxy w -> r -> f
+
+instance ResultE r r 'End where
+    mkConstE _ r = r
+
+instance ResultE f r w' => ResultE (a -> f) r ('Step w') where
+    mkConstE _ r = \(_ :: a) -> mkConstE (Proxy :: Proxy w') r
+
+-- mkConst :: forall f r w. (r ~ Result f, w ~ Result' f, ResultE f r w)
+--     => r -> f
+-- mkConst = mkConstE (Proxy :: Proxy w)
+
+-- same
+mkConst :: forall f. ResultE f (Result f) (Result' f) => Result f -> f
+mkConst = mkConstE (Proxy :: Proxy (Result' f))
+
+{-----------------------------------------------------------------------------}
+
+class ResultC f r where
+    mkConstC :: r -> f
+
+instance ResultC r r where
+    mkConstC r = r
+
+instance ResultC f r => ResultC (a -> f) r where
+    mkConstC r = \(_ :: a) -> mkConstC r
+
+-- WHAT??? This works, too?
+mkConst' :: forall f. ResultC f (Result f) => Result f -> f
+mkConst' = mkConstC
+
+exMkConst'1 :: Int -> Int -> Bool
+exMkConst'1 = mkConst' True
+
+-- i guess ghc keeps going until f ~ r
+exMkConstC1 :: Int -> Int -> Bool
+exMkConstC1 = mkConstC True         -- is fine
+-- exMkConstC1 = mkConstC (const True :: Int -> Bool)     -- error: Overlapping instances for ResultC (Int -> Bool) (Int -> Bool)
+-- exMkConstC1 = mkConstC (3 :: Int)   -- error: No instance for (ResultC Bool Int)
+
+-- The partial example (const 5 :: Int -> Bool) doesn't work with mkConst either,
+-- but at least the error message is clear why.
+-- exMkConst1 :: Int -> Int -> Bool
+-- exMkConst1 = mkConst (const True :: Int -> Bool)   -- error: Couldn't match type ‘Int -> Bool’ with ‘Bool’
+
+{-----------------------------------------------------------------------------}
+-- So the witness should probably encode "where to stop"
+
+type family FindResult r f :: ResultWitness where
+    FindResult r r = 'End
+    FindResult r (s -> m) = 'Step (FindResult r m)
+    FindResult r x = TypeError ( 'ShowType r ':<>: 'Text " is not a result type of " ':<>: 'ShowType x )
+
+exMkConstE1 :: Int -> Int -> Bool
+exMkConstE1 = mkConstE 
+    (Proxy :: Proxy (FindResult (Int -> Bool) (Int -> Int -> Bool)))
+    (const True :: Int -> Bool)    
+
+mkConst'' :: forall f r. ResultE f r (FindResult r f) => r -> f
+mkConst'' = mkConstE (Proxy :: Proxy (FindResult r f))
+
+-- Yay
+exMkConst'' :: a -> Int -> Bool
+exMkConst'' = mkConst'' (const True :: Int -> Bool)
+
+{-----------------------------------------------------------------------------}
+
