@@ -1,5 +1,6 @@
 
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE TupleSections #-}
 
 {-  Let's see how well we can represent a flexible term
     type using GADTs and recursion-schemes.
@@ -20,6 +21,15 @@ import Data.Functor.Const
 import Data.Functor.Classes
 import Data.Functor.Foldable
 import Control.Monad (ap)
+
+import Data.Bool (bool)
+import Data.Foldable (toList)
+import Data.Traversable (foldMapDefault)
+
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Control.Monad.Identity
+import Control.Monad.State
 
 {-# ANN module "HLint: ignore Use newtype instead of data" #-}
 {-# ANN module "HLint: ignore Use camelCase" #-}
@@ -47,12 +57,13 @@ data TermF
     VariableT   ::                  var ->      TermF op val var rec
     RecT        :: ProperRecT op => op rec ->   TermF op val var rec
 
+deriving instance (Eq (op r), Eq val, Eq var) => Eq (TermF op val var r)
 deriving instance Functor (TermF op val var)
 -- deriving instance Foldable (TermF op val var)
 -- deriving instance Traversable (TermF op val var)
 
 -- I'm going to reget this, am i?
-class (Show1 op, Functor op, Foldable op, Traversable op) => ProperRecT op where
+class (Show1 op, Eq1 op, Functor op, Foldable op, Traversable op) => ProperRecT op where
     -- Something like this
 
 -- Dispatcher, just in case you want to make things more complicated
@@ -87,6 +98,8 @@ deriving instance Traversable (Op uop bop flop)
 
 class (Show o, Eq o, Ord o) => ProperOpTag o where
     opPrec :: o -> Int
+    opName :: o -> String
+    opName = show
 
 instance ProperOpTag Void where
     opPrec = absurd
@@ -118,13 +131,18 @@ data BooleanFlatOp = BConjunction | BDisjunction
 instance ProperOpTag BooleanBOp where
     opPrec BooleanAnd = 6
     opPrec BooleanOr = 3
+    opName BooleanAnd = "BAnd"
+    opName BooleanOr = "BOr"
 
 instance ProperOpTag BooleanUOp where
     opPrec BooleanNot = 10
+    opName BooleanNot = "BNot"
 
 instance ProperOpTag BooleanFlatOp where
     opPrec BConjunction = 6
     opPrec BDisjunction = 3
+    opName BConjunction = "BConj"
+    opName BDisjunction = "BDisj"
 
 -- Show1 instance for Op is below
 
@@ -148,6 +166,27 @@ instance Corecursive (Term op val a) where
     embed = Fix4
 
 {-----------------------------------------------------------------------------}
+-- Equality of terms
+
+instance Eq1 (f a b c) => Eq (Fix4 f a b c) where
+    (==) (Fix4 fa) (Fix4 fb) = eq1 fa fb
+
+instance Eq1 (Op a b c) where
+    liftEq :: (x -> x' -> Bool) -> Op a b c x -> Op a b c x' -> Bool
+    liftEq f (UnaryOp o x) (UnaryOp o' x') = (o == o') && f x x'
+    liftEq f (BinaryOp o a b) (BinaryOp o' a' b')
+        = (o == o') && f a a' && f b b'
+    liftEq f (FlatOp o xs) (FlatOp o' xs')
+        = (o == o') && liftEq f xs xs'
+    liftEq _ _ _ = False
+
+instance (Eq val, Eq var) => Eq1 (TermF op val var) where
+    liftEq _ (ConstT a) (ConstT b) = a == b
+    liftEq _ (VariableT a) (VariableT b) = a == b
+    liftEq f (RecT ra) (RecT rb) = liftEq f ra rb
+    liftEq _ _ _ = False
+
+{-----------------------------------------------------------------------------}
 -- Functor, Applicative and Monad on Variables
 
 instance Functor (Term op val) where
@@ -168,6 +207,16 @@ instance Monad (Term op val) where
     Fix4 (VariableT v)  >>= f   = f v
     Fix4 (ConstT x)     >>= _   = Fix4 $ ConstT x
     Fix4 (RecT op)      >>= f   = Fix4 $ RecT $ fmap (>>= f) op
+
+instance Foldable (Term op val) where
+   foldMap = foldMapDefault
+
+instance Traversable (Term op val) where
+    traverse :: Applicative f => (a -> f b) -> Term op val a -> f (Term op val b)
+    traverse f = \case
+        (Val v) -> pure (Val v)
+        (Var v) -> Var <$> f v
+        (Rec v) -> Rec <$> traverse (traverse f) v
 
 {-----------------------------------------------------------------------------}
 -- And a few pattern synonyms for brevity
@@ -343,6 +392,19 @@ inject = gInject @s @t @(FindInjection s t) Proxy
 -- Our show instance will print the expression in forms of patterns
 -- This is contrary to what show usually does, but much easier to use
 
+
+-- FIXME: Fix4 can actually even be an instance of Show2
+instance Show2 (f a b) => Show1 (Fix4 f a b) where
+    liftShowsPrec :: forall c. (Int -> c ->  ShowS) -> ([c] -> ShowS)
+        -> Int -> Fix4 f a b c -> ShowS
+    liftShowsPrec showC showListC = go where
+        go :: Int -> Fix4 f a b c -> ShowS
+        go d (Fix4 f) = liftShowsPrec2 showC showListC go (showListWith (go 0)) d f
+
+instance Show1 (f a b c) => Show (Fix4 f a b c) where
+    showsPrec :: Int -> Fix4 f a b c -> ShowS
+    showsPrec d (Fix4 f) = liftShowsPrec showsPrec showList d f
+
 instance Show1 (Op uop bop flop) where
     liftShowsPrec :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS)
         -> Int -> Op uop bop flop a -> ShowS
@@ -351,49 +413,102 @@ instance Show1 (Op uop bop flop) where
         prec = 10   -- same precedence for everyone in show
         in \case
         UnaryOp o t     -> showParen (d > prec) $
-            showString (show o ++ " ") . showsRec (prec+1) t
+            showString (opName o ++ " ") . showsRec (prec+1) t
         BinaryOp o a b  -> showParen (d > prec) $
-            showsRec (prec+1) a . showString (" `" ++ show o ++ "` ") . showsRec (prec+1) b
+            showsRec (prec+1) a . showString (" `" ++ opName o ++ "` ") . showsRec (prec+1) b
         FlatOp o xs     -> showParen (d > prec) $
-            showString (show o ++ " [") .
-            showListWith (showsRec 0) xs .
-            showString "]"
+            showString (opName o) .
+            showListWith (showsRec 0) xs
 
 -- FIXME: Generalize & use PP
-instance Show val => Show1 (Term (Op uop bop flop) val) where
-    liftShowsPrec :: forall a. (Int -> a -> ShowS) -> ([a] -> ShowS)
-        -> Int -> Term (Op uop bop flop) val a -> ShowS
-    liftShowsPrec showsVar showsList d = let
-        showsRec :: Int -> Term (Op uop bop flop) val a -> ShowS
-        showsRec = liftShowsPrec showsVar showsList
+instance Show val => Show2 (TermF op val) where
+    liftShowsPrec2 :: forall var a.
+           (Int -> var -> ShowS) -> ([var] -> ShowS)
+        -> (Int -> a -> ShowS) -> ([a] -> ShowS)
+        -> Int -> TermF op val var a -> ShowS
+    liftShowsPrec2 showVar _ showA showAL = go where
         prec :: Int
         prec = 10   -- same precedence for everyone
-        in \case
-        Val v       -> shows v
-        Var v       -> showParen (d > prec) $
-            showString "Var " . showsVar d v
-        Rec v       -> liftShowsPrec showsRec (showListWith (showsRec 0)) d v
-        -- BNot a      -> -- let prec = 10 in
-        --     showParen (d > prec) $ showString "BNot " . showrec (prec+1) a
-        -- BBOp o a b   -> -- let prec = c_prec o in
-        --     showParen (d > prec) $
-        --     showrec (prec+1) a . showString (" `" ++ c_pname o ++ "` ") . showrec (prec+1) b
+        go :: Int -> TermF op val var a -> ShowS
+        go d = \case
+            ConstT v    -> showParen (d > prec) $
+                showString "Val " . shows v
+            VariableT v -> showParen (d > prec) $
+                showString "Var " . showVar d v
+            RecT v      -> liftShowsPrec showA showAL d v
 
--- instance (Show var, Show val) => Show (Term BOps val var) where
---     showsPrec = showsPrec1
+instance (Show val, Show var) => Show1 (TermF op val var) where
+    liftShowsPrec = liftShowsPrec2 showsPrec showList
 
-instance (Show var, Show1 (Term (Op uop bop flop) val)) => Show (Term (Op uop bop flop) val var) where
-    showsPrec = showsPrec1
+{-----------------------------------------------------------------------------}
+-- Constant folding
+-- This function was once called "simplifyPrimitive"
+
+-- Dumb idea? This looks very nice because the Bool gets /factored out/ in the type!
+type BooleanValue = Term VoidF Bool Void
+
+{- | Fold constants in a term.
+
+TODO: Create a version that works on flattened terms.
+-}
+constantFold' :: Term BOps Bool a -> Either Bool (Term BOps Void a)
+constantFold' = cata $ termFDispatch fRec
+    (\(ConstT b) -> Left b)
+    (\(VariableT v) -> Right $ Var v)
+    where
+    fRec :: Alg (TermF BOps Void Void) (Either Bool (Term BOps Void a))
+    fRec (ConstT x) = absurd x
+    fRec (VariableT x) = absurd x
+    fRec (RecT (UnaryOp BooleanNot t)) = case t of
+        Left b      -> Left $ not b
+        Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
+    fRec (RecT (BinaryOp BooleanAnd l r)) = sAnd l r where
+        sAnd (Right a)      (Right b)   = Right $ BAnd a b
+        sAnd (Left True)    rhs         = rhs
+        sAnd (Left False)   _           = Left False
+        sAnd lhs            rhs         = sAnd rhs lhs -- symm.
+    fRec (RecT (BinaryOp BooleanOr l r)) = sOr l r where
+        sOr  (Right a)      (Right b)   = Right $ BOr a b
+        sOr  (Left True)    _           = Left True
+        sOr  (Left False)   rhs         = rhs
+        sOr  lhs            rhs         = sOr rhs lhs -- symm.
+    fRec (RecT (FlatOp op _)) = absurd op
+
+-- Generalized to arbitrary inputs
+constantFold :: (t a :<: Term BOps Bool a) => t a -> Either Bool (Term BOps Void a)
+constantFold = constantFold' . inject
+
+{-----------------------------------------------------------------------------}
+
+invertOp :: BooleanBOp -> BooleanBOp
+invertOp BooleanAnd = BooleanOr
+invertOp BooleanOr = BooleanAnd
+
+type BNOps = Op Void BooleanBOp Void
+
+pushNegations' :: Term BOps Void a -> Term BNOps Void (Bool, a)
+pushNegations' term = cata pushNeg term True where
+    pushNeg :: Alg (TermF BOps Void a) (Bool -> Term BNOps Void (Bool, a))
+    pushNeg (ConstT x) = absurd x
+    pushNeg (VariableT x) = \b -> Var (b, x)
+    pushNeg (RecT (UnaryOp BooleanNot t)) = t . not
+    pushNeg (RecT (BinaryOp op l r)) = \b ->
+        BBOp (bool invertOp id b op) (l b) (r b)
+    pushNeg (RecT (FlatOp op _)) = absurd op
 
 {-----------------------------------------------------------------------------}
 -- Flattening
 
-flatten' :: Term BOps val var -> Term BFlOps val var
+type BNFlOps = Op Void Void BooleanFlatOp
+
+flatten' :: forall uop val var. ProperOpTag uop
+     => Term (Op uop BooleanBOp Void) val var -> Term (Op uop Void BooleanFlatOp) val var
 flatten' = cata flat where
-    flat :: Alg (TermF BOps val var) (Term BFlOps val var)
+    flat :: Alg (TermF (Op uop BooleanBOp Void) val var) (Term (Op uop Void BooleanFlatOp) val var)
     flat (ConstT v) = Val v
     flat (VariableT v) = Var v
-    flat (RecT (UnaryOp BooleanNot t)) = BNot t
+    --flat (RecT (UnaryOp op _)) = absurd op
+    flat (RecT (UnaryOp op t)) = BUOp op t
     flat (RecT (BinaryOp BooleanAnd a b)) = case (a, b) of
         (BConj l, BConj r)  -> BConj (l ++ r)
         (BConj l, rhs    )  -> BConj (l ++ [rhs])
@@ -413,52 +528,140 @@ that by using type applications, e.g.:
 
 >>> flatten @Bool @String $ constantFold demo2b
 -}
-flatten :: forall val var t. (t :<: Term BOps val var) => t -> Term BFlOps val var
+flatten :: forall val var t. (t :<: Term BNOps val var) => t -> Term BNFlOps val var
 flatten = flatten' . inject
 
 {-----------------------------------------------------------------------------}
--- Constant folding
--- This function was once called "simplifyPrimitive"
 
--- Dumb idea? This looks very nice because the Bool gets /factored out/ in the type!
-type BooleanValue = Term VoidF Bool Void
-
-{- | Fold constants in a term.
-
-TODO: Create a version that works on flattened terms.
--}
-constantFold' :: Term BOps Bool a -> Either Bool (Term BOps Void a)
-constantFold' = cata $ termFDispatch fRec
-    (\(ConstT b) -> Left b)
-    (\(VariableT v) -> Right $ Var v)
-    where
-    fRec :: Alg (TermF (Op BooleanUOp BooleanBOp Void) Void Void) (Either Bool (Term BOps Void a))
-    fRec (ConstT x) = absurd x
-    fRec (VariableT x) = absurd x
-    fRec (RecT (UnaryOp BooleanNot t)) = case t of
-        Left b      -> Left $ not b
-        Right t'    -> Right $ BNot t'  -- We could have "Right $ not t'" here, woot?
-    fRec (RecT (BinaryOp BooleanAnd l r)) = sAnd l r where
-        sAnd (Right a)      (Right b)   = Right $ BAnd a b
-        sAnd (Left True)    rhs         = rhs
-        sAnd (Left False)   _           = Left False
-        sAnd lhs            rhs         = sAnd rhs lhs -- symm.
-    fRec (RecT (BinaryOp BooleanOr l r)) = sOr l r where
-        sOr  (Right a)      (Right b)   = Right $ BOr a b
-        sOr  (Left True)    _           = Left True
-        sOr  (Left False)   rhs         = rhs
-        sOr  lhs            rhs         = sOr rhs lhs -- symm.
-    fRec (RecT (FlatOp void _)) = absurd void
-
--- Generalized to arbitrary inputs
-constantFold :: (t a :<: Term BOps Bool a) => t a -> Either Bool (Term BOps Void a)
-constantFold = constantFold' . inject
+simplify :: (t a :<: Term BOps Bool a) => t a -> Term BNFlOps Void (Bool, a)
+simplify term = case constantFold term of
+    Left True -> BConj []
+    Left False -> BDisj []
+    Right b -> (flatten . pushNegations') b
 
 {-----------------------------------------------------------------------------}
--- Renaming variables is easy now?
+-- Transform to CNF by distribution (inefficient)
 
-renameVars :: (a -> b) -> Term op val a -> Term op val b
-renameVars = fmap
+data Conjunction e = Conjunction [e]
+    deriving (Show, Eq, Functor, Foldable, Traversable)
+
+-- | Boolean disjunctions of arbitrary length
+-- a.k.a. "flattened" or expressions
+data Disjunction e = Disjunction [e]
+    deriving (Show, Eq, Functor, Foldable, Traversable)
+
+type CNF lit = Conjunction (Disjunction lit)
+
+instance Applicative Conjunction where
+    pure = Conjunction . pure
+    (<*>) (Conjunction a) (Conjunction b)
+        = Conjunction (a <*> b)
+
+instance Applicative Disjunction where
+    pure = Disjunction . pure
+    (<*>) (Disjunction a) (Disjunction b)
+        = Disjunction (a <*> b)
+
+distributeDisjunction :: Disjunction (Conjunction e) -> Conjunction (Disjunction e)
+distributeDisjunction = sequenceA       -- Well, isn't this easy.
+
+joinConjunction :: Conjunction (Conjunction e) -> Conjunction e
+joinConjunction (Conjunction xs) = -- Monad.join
+    Conjunction [y | Conjunction x <- xs, y <- x]
+
+joinDisjunction :: Disjunction (Disjunction e) -> Disjunction e
+joinDisjunction (Disjunction xs) = -- Monad.join
+    Disjunction [y | Disjunction x <- xs, y <- x]
+
+distributeToCNF :: forall a. Term BNFlOps Void a -> CNF a
+distributeToCNF = cata distr where
+    distr :: Alg (TermF BNFlOps Void a) (CNF a)
+    distr (ConstT x) = absurd x
+    distr (VariableT x) = (pure . pure) x
+    distr (RecT (UnaryOp op _)) = absurd op
+    distr (RecT (BinaryOp op _ _)) = absurd op
+    distr (RecT (FlatOp op xs)) = case op of
+        BConjunction -> joinConjunction $ Conjunction xs
+        BDisjunction -> fmap joinDisjunction . distributeDisjunction $ Disjunction xs
+
+moo1 :: Term BNFlOps Void Int
+moo1 = BConj[BDisj[Var 1,Var 2],BDisj[Var 3,Var 4]]
+
+moo2 :: Term BNFlOps Void Int
+moo2 = BDisj[BConj[Var 1,Var 2],BConj[Var 3,Var 4]]
+
+toCNF :: (t a :<: Term BOps Bool a) => t a -> CNF (Bool, a)
+toCNF = distributeToCNF . simplify
+
+{-----------------------------------------------------------------------------}
+-- Handling variables
+
+data Context name op val = Context
+    {   getNameMap :: Map Int name
+    ,   getInfoMap :: Map name (Int, String)
+    ,   getTerm :: Term op val Int
+    }
+
+deriving instance (Show name, Show val) => Show (Context name op val)
+deriving instance (Eq name, Eq val) => Eq (Context name op val)
+
+-- queryIndex :: Context name op val -> name -> Int
+-- queryIndex ctx = fst . (Map.!) (getInfoMap ctx)
+
+buildContext :: forall name op val. Ord name => Term op val name -> Context name op val
+buildContext t = let
+    nList :: [name]
+    nList = toList t
+    {- The variables numbers HAVE TO start with 1, because we will
+        use signs in CNF to indicate negation
+    -}
+    nameMap :: Map Int name
+    nameMap = Map.fromList $ zip [1..] nList
+    infoMap :: Map name (Int, String)
+    infoMap = Map.fromList $ zip nList (fmap (,"") [1..])
+    mapNames :: name -> Int
+    mapNames = fst . (Map.!) infoMap
+    in Context nameMap infoMap (fmap mapNames t)
+
+destroyContext :: forall name op val. Ord name => Context name op val -> Term op val name
+destroyContext (Context nameMap _ t) = let
+    remapNames :: Int -> name
+    remapNames = (Map.!) nameMap
+    in fmap remapNames t
+
+-- TODO: Could be much more efficient
+cRenameVars :: (Ord a, Ord b) => (a -> b) -> Context a op val -> Context b op val
+cRenameVars rename = buildContext . fmap rename . destroyContext
+
+appTerm :: Term op val (Term op val var) -> Term op val var
+appTerm (Val x) = Val x
+appTerm (Var x) = x
+appTerm (Rec f) = Rec $ fmap appTerm f
+
+substVars :: (var -> Term op val var') -> Term op val var -> Term op val var'
+substVars f = appTerm . fmap f
+
+-- Class of "actually useful" variable names
+-- class Ord n => VarName n where
+
+
+{-----------------------------------------------------------------------------}
+-- Monad for fresh names, as usual
+
+-- newtype SupplyT s m a = SupplyT (StateT [s] m a)
+--     deriving (Functor, Monad, MonadTrans, MonadIO)
+
+-- newtype Supply s a = Supply (SupplyT s Identity a)
+--     deriving (Functor, Monad, MonadSupply s)
+
+-- class Monad m => MonadSupply s m | m -> s where
+--     supply :: m s
+    
+-- instance Monad m => MonadSupply s (SupplyT s m) where
+--     supply = SupplyT $ do
+--                 (x:xs) <- get
+--                 put xs
+--                 return x
 
 {-----------------------------------------------------------------------------}
 -- Mini logic module
@@ -557,11 +760,11 @@ is a f = if f a then true else false
 
 existsUnique :: (Eq a, BooleanArithmetic b) => [a] -> (a -> b) -> b
 existsUnique s p = foldr1 and
-    [   exists s p              -- ∃(x ∈ s). p(x)
-    ,   forAll s $ \x1 ->       -- ∀(x1 ∈ s).
-        forAll s $ \x2 ->       -- ∀(x2 ∈ s).
-        given (x1 /= x2) $      -- (x1 ≠ x2) =>
-        p x1 `excludes` p x2    -- ¬p(x1) ∨ ¬p(x2)
+    [   exists s p              --   ∃(x ∈ s). p(x)
+    ,   forAll s $ \x1 ->       -- ∧ ∀(x1 ∈ s).
+        forAll s $ \x2 ->       --   ∀(x2 ∈ s).
+        given (x1 /= x2) $      --   (x1 ≠ x2) =>
+        p x1 `excludes` p x2    --   ¬p(x1) ∨ ¬p(x2)
     ]
 
 -- This variant is nice and short, but generates irregular terms
@@ -583,6 +786,10 @@ demo2a :: BooleanExpr String
 demo2a = existsUnique [1..3::Int] (\x -> var $ "N" ++ show x)
 demo2b :: BooleanExpr String
 demo2b = existsUnique' [1..3::Int] (\x -> var $ "N" ++ show x)
+
+demo2c :: Term BNFlOps Void (Bool, String)
+demo2c = simplify demo2b
+--demo2c = flatten @Bool @String $ constantFold demo2b
 
 {-----------------------------------------------------------------------------}
 -- Further ideas

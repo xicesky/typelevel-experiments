@@ -31,6 +31,8 @@ dependencies:
 - bound
 - data-fix
 - recursion-schemes
+- mtl
+- transformers
 #- list-witnesses
 
 default-extensions:

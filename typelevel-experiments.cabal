@@ -31,6 +31,7 @@ library
       Compdata.SubsumeCommon
       Compdata.VoidTermCompdata
       Impredicative
+      NonDet
       PatternSynonyms
       TermRepresentation.FindInjection
       TermRepresentation.GADT
@@ -55,9 +56,11 @@ library
     , decidable
     , deriving-compat
     , hashable
+    , mtl
     , recursion-schemes
     , singletons
     , text
+    , transformers
     , unordered-containers
   default-language: Haskell2010
 
@@ -77,9 +80,11 @@ executable typelevel-experiments-exe
     , decidable
     , deriving-compat
     , hashable
+    , mtl
     , recursion-schemes
     , singletons
     , text
+    , transformers
     , typelevel-experiments
     , unordered-containers
   default-language: Haskell2010
@@ -101,9 +106,11 @@ test-suite typelevel-experiments-test
     , decidable
     , deriving-compat
     , hashable
+    , mtl
     , recursion-schemes
     , singletons
     , text
+    , transformers
     , typelevel-experiments
     , unordered-containers
   default-language: Haskell2010
