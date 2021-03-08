@@ -1,6 +1,7 @@
 
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 {-  Let's see how well we can represent a flexible term
     type using GADTs and recursion-schemes.
@@ -20,7 +21,7 @@ import Text.Show (showListWith)
 import Data.Functor.Const
 import Data.Functor.Classes
 import Data.Functor.Foldable
-import Control.Monad (ap)
+-- import Control.Monad (ap)
 
 import Data.Bool (bool)
 import Data.Foldable (toList)
@@ -594,44 +595,7 @@ toCNF :: (t a :<: Term BOps Bool a) => t a -> CNF (Bool, a)
 toCNF = distributeToCNF . simplify
 
 {-----------------------------------------------------------------------------}
--- Handling variables
-
-data Context name op val = Context
-    {   getNameMap :: Map Int name
-    ,   getInfoMap :: Map name (Int, String)
-    ,   getTerm :: Term op val Int
-    }
-
-deriving instance (Show name, Show val) => Show (Context name op val)
-deriving instance (Eq name, Eq val) => Eq (Context name op val)
-
--- queryIndex :: Context name op val -> name -> Int
--- queryIndex ctx = fst . (Map.!) (getInfoMap ctx)
-
-buildContext :: forall name op val. Ord name => Term op val name -> Context name op val
-buildContext t = let
-    nList :: [name]
-    nList = toList t
-    {- The variables numbers HAVE TO start with 1, because we will
-        use signs in CNF to indicate negation
-    -}
-    nameMap :: Map Int name
-    nameMap = Map.fromList $ zip [1..] nList
-    infoMap :: Map name (Int, String)
-    infoMap = Map.fromList $ zip nList (fmap (,"") [1..])
-    mapNames :: name -> Int
-    mapNames = fst . (Map.!) infoMap
-    in Context nameMap infoMap (fmap mapNames t)
-
-destroyContext :: forall name op val. Ord name => Context name op val -> Term op val name
-destroyContext (Context nameMap _ t) = let
-    remapNames :: Int -> name
-    remapNames = (Map.!) nameMap
-    in fmap remapNames t
-
--- TODO: Could be much more efficient
-cRenameVars :: (Ord a, Ord b) => (a -> b) -> Context a op val -> Context b op val
-cRenameVars rename = buildContext . fmap rename . destroyContext
+-- Substitutions
 
 appTerm :: Term op val (Term op val var) -> Term op val var
 appTerm (Val x) = Val x
@@ -641,27 +605,168 @@ appTerm (Rec f) = Rec $ fmap appTerm f
 substVars :: (var -> Term op val var') -> Term op val var -> Term op val var'
 substVars f = appTerm . fmap f
 
--- Class of "actually useful" variable names
--- class Ord n => VarName n where
+{-----------------------------------------------------------------------------}
+-- Handling mapped variables
 
+type MappedNames name = (Map Int name, Map name Int)
+
+{- The variables numbers HAVE TO start with 1, because we will
+    use signs in CNF to indicate negation
+-}
+mkMappedNames :: Ord name => [name] -> MappedNames name
+mkMappedNames nList = (Map.fromList $ zip [1..] nList, Map.fromList $ zip nList [1..])
+
+mappedHasName :: Ord name => MappedNames name -> name -> Bool
+mappedHasName (_, m) name = Map.member name m
+
+mappedInsert :: (Ord name, Show name) => Int -> name -> MappedNames name -> MappedNames name
+mappedInsert i name (iton, ntoi)
+    | Map.member i iton     = error $ "Index " ++ show i ++ " already exists"
+    | Map.member name ntoi  = error $ "Name " ++ show name ++ " already exists"
+    | otherwise             = (Map.insert i name iton, Map.insert name i ntoi)
+
+data Context name op val = Context
+    {   getMappedNames :: MappedNames name
+    ,   getTerm :: Term op val Int
+    }
+
+getNameMap :: Context name op val -> Map Int name
+getNameMap = fst . getMappedNames
+
+getIndexMap :: Context name op val ->  Map name Int
+getIndexMap = snd . getMappedNames
+
+deriving instance (Show name, Show val) => Show (Context name op val)
+deriving instance (Eq name, Eq val) => Eq (Context name op val)
+
+-- queryIndex :: Context name op val -> name -> Int
+-- queryIndex ctx = fst . (Map.!) (getInfoMap ctx)
+
+buildContext :: forall name op val. Ord name => Term op val name -> Context name op val
+buildContext t = let
+    mappedNames :: MappedNames name
+    mappedNames = mkMappedNames (toList t)
+    indexNames :: name -> Int
+    indexNames = (Map.!) (snd mappedNames)
+    in Context mappedNames (fmap indexNames t)
+
+destroyContext :: forall name op val. Ord name => Context name op val -> Term op val name
+destroyContext (Context mappedNames t) = let
+    remapNames :: Int -> name
+    remapNames = (Map.!) (fst mappedNames)
+    in fmap remapNames t
+
+-- TODO: Could be much more efficient
+cRenameVars :: (Ord a, Ord b) => (a -> b) -> Context a op val -> Context b op val
+cRenameVars rename = buildContext . fmap rename . destroyContext
+
+
+-- FIXME: For now, we just use "String" as name, generalize later
+
+{- | Class of "actually useful" variable names
+
+Where "actually useful" means you can generate new ones.
+-}
+-- class (Show n, Ord n) => VarName n where
+--     {- | Given a "set" of existing names, generate a new one
+
+--     >>> f (mkFreshName f) == False
+--     -}
+--     mkFreshName :: (n -> Bool) -> n
+
+--     refreshName :: (n -> Bool) -> n -> n
+--     refreshName e _ = mkFreshName e
+
+--     mkFreshHint :: (n -> Bool) -> String -> n
+--     mkFreshHint e _ = mkFreshName e
+
+--     refreshHint :: (n -> Bool) -> String -> n -> n
+--     refreshHint e _ _ = mkFreshName e
+
+findFreshName :: MappedNames String -> String -> String
+findFreshName m prefix = head $ dropWhile exists' varnames where
+    suffixes :: [String]
+    suffixes = "" : ([replicate k ['a'..'z'] | k <- [1..]] >>= sequence)
+    varnames :: [String]
+    varnames = (prefix++) <$> suffixes
+    exists' :: String -> Bool
+    exists' = mappedHasName m
 
 {-----------------------------------------------------------------------------}
--- Monad for fresh names, as usual
+-- Monad for fresh names
 
--- newtype SupplyT s m a = SupplyT (StateT [s] m a)
---     deriving (Functor, Monad, MonadTrans, MonadIO)
+-- Not "splitable" for now
+data FreshState = FreshState
+    {   fsNextIndex :: Int
+    ,   fsPrefix :: String
+    ,   fsNames :: MappedNames String
+    }
+    deriving (Show, Eq)
 
--- newtype Supply s a = Supply (SupplyT s Identity a)
---     deriving (Functor, Monad, MonadSupply s)
+fsMkFreshName :: String -> FreshState -> (Int, FreshState)
+fsMkFreshName prefix (FreshState index p names) = let
+    name :: String
+    name = findFreshName names prefix
+    in (index, FreshState (index+1) p (mappedInsert index name names))
 
--- class Monad m => MonadSupply s m | m -> s where
---     supply :: m s
-    
--- instance Monad m => MonadSupply s (SupplyT s m) where
---     supply = SupplyT $ do
---                 (x:xs) <- get
---                 put xs
---                 return x
+newtype FreshT m a = FreshT { toStateT :: StateT FreshState m a }
+    --deriving (Functor, Monad, MonadTrans, MonadIO)
+
+deriving instance Functor m => Functor (FreshT m)
+deriving instance Monad m => Applicative (FreshT m)
+deriving instance Monad m => Monad (FreshT m)
+deriving instance MonadTrans FreshT
+
+deriving instance MonadIO m => MonadIO (FreshT m)
+-- ... and so on... implement as we need it
+
+class MonadFresh m where
+    freshName :: String -> m Int
+
+instance Monad m => MonadFresh (FreshT m) where
+    freshName prefix = FreshT $ do
+        state (fsMkFreshName prefix)
+
+-- FIXME: get some proper names for those functions, these here are horrible
+
+runFreshT :: Monad m => FreshT m a -> MappedNames String -> m (a, MappedNames String)
+runFreshT fresh mapped = let
+    maxI :: Int
+    maxI = maximum $ 0 : Map.keys (fst mapped)
+    initState :: FreshState
+    initState = FreshState (maxI+1) "" mapped
+    in do
+        (a, FreshState _ _ mapped') <- runStateT (toStateT fresh) initState
+        return (a, mapped')
+
+withFreshT :: forall m op val. Monad m
+    => Context String op val
+    -> (Term op val Int -> FreshT m (Term op val Int))
+    -> m (Context String op val)
+withFreshT (Context mapped term) f = let
+    result :: m (Term op val Int, MappedNames String)
+    result = runFreshT (f term) mapped
+    in do
+        (term', mapped') <- result
+        return $ Context mapped' term'
+
+withFresh :: Context String op val
+    -> (Term op val Int -> FreshT Identity (Term op val Int))
+    -> Context String op val
+withFresh ctx f = runIdentity (withFreshT ctx f)
+
+newFresh :: FreshT Identity (Term op val Int) -> Context String op val
+newFresh f = runIdentity $ do
+    (term, mapped) <- runFreshT f (mkMappedNames [])
+    return $ Context mapped term
+
+testFreshT :: BooleanExpr String
+testFreshT = destroyContext $ newFresh $ do
+    a1 <- freshName "a"
+    b <- freshName "b"
+    a2 <- freshName "a"
+    a3 <- freshName "a"
+    return $ Var a1 `BAnd` BNot (Var b) `BOr` Var a2 `BOr` Var a3
 
 {-----------------------------------------------------------------------------}
 -- Mini logic module
