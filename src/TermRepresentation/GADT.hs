@@ -1,4 +1,5 @@
 
+{-# OPTIONS_GHC -Wno-name-shadowing -Wno-unused-imports #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -29,6 +30,9 @@ import Data.Traversable (foldMapDefault)
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
+
 import Control.Monad.Identity
 import Control.Monad.State
 import Control.Monad.Writer
@@ -46,6 +50,16 @@ type Alg f a = f a -> a
 
 -- The ever looming void functor
 type VoidF = Const Void
+
+-- Types that are actually the empty set, i.e. isomorphic to Void
+class IsoVoid a where
+    absurd' :: a -> b
+
+instance IsoVoid Void where
+    absurd' = absurd
+
+instance IsoVoid (VoidF a) where
+    absurd' = absurd . getConst
 
 {-----------------------------------------------------------------------------}
 -- Terms, part 1: Term structure
@@ -82,6 +96,7 @@ termFDispatch fRec fVal fVar = \case
 
 -- Fixpoint
 newtype Fix4 f a b c = Fix4 { unFix4 :: f a b c (Fix4 f a b c) }
+
 type Term = Fix4 TermF
 
 {-----------------------------------------------------------------------------}
@@ -211,7 +226,7 @@ instance Monad (Term op val) where
     Fix4 (RecT op)      >>= f   = Fix4 $ RecT $ fmap (>>= f) op
 
 {-----------------------------------------------------------------------------}
--- Foldable, Traversable for TermF and Term
+-- Foldable, Traversable, IsoVoid for TermF and Term
 
 instance Foldable (TermF op val var) where
    foldMap = foldMapDefault
@@ -232,6 +247,24 @@ instance Traversable (Term op val) where
         (Val v) -> pure (Val v)
         (Var v) -> Var <$> f v
         (Rec v) -> Rec <$> traverse (traverse f) v
+
+{- Terms without values or variables don't exist, iff
+    op doesn't hold any constants.
+-}
+
+instance (Functor (f a b c), IsoVoid (f a b c Void)) => IsoVoid (Fix4 f a b c) where
+    absurd' (Fix4 f) = absurd' $ fmap (absurd' :: Fix4 f a b c -> Void) f
+
+instance IsoVoid (op Void) => IsoVoid (TermF op Void Void Void) where
+    absurd' :: TermF op Void Void Void -> b
+    absurd' (ConstT v) = absurd v
+    absurd' (VariableT v) = absurd v
+    absurd' (RecT op) = absurd' op
+
+instance IsoVoid (Op uop bop Void Void) where
+    absurd' (UnaryOp _ r) = absurd r
+    absurd' (BinaryOp _ a _) = absurd a     -- which Void would you like? the left one?
+    absurd' (FlatOp op _) = absurd op
 
 {-----------------------------------------------------------------------------}
 -- And a few pattern synonyms for brevity
@@ -501,16 +534,24 @@ invertOp BooleanOr = BooleanAnd
 
 type Literal a = (Bool, a)
 
+newtype TermLit op val name  = TermLit { unTermLit :: Term op val (Literal name) }
+
+deriving instance (Show val, Show name) => Show (TermLit op val name)
+deriving instance (Eq val, Eq name) => Eq (TermLit op val name)
+deriving instance Functor (TermLit op val)
+deriving instance Foldable (TermLit op val)
+deriving instance Traversable (TermLit op val)
+
 type BNOps = Op Void BooleanBOp Void
 
-pushNegations' :: Term BOps Void a -> Term BNOps Void (Bool, a)
+pushNegations' :: Term BOps Void a -> TermLit BNOps Void a
 pushNegations' term = cata pushNeg term True where
-    pushNeg :: Alg (TermF BOps Void a) (Bool -> Term BNOps Void (Bool, a))
+    pushNeg :: Alg (TermF BOps Void a) (Bool -> TermLit BNOps Void a)
     pushNeg (ConstT x) = absurd x
-    pushNeg (VariableT x) = \b -> Var (b, x)
+    pushNeg (VariableT x) = \b -> TermLit $ Var (b, x)
     pushNeg (RecT (UnaryOp BooleanNot t)) = t . not
-    pushNeg (RecT (BinaryOp op l r)) = \b ->
-        BBOp (bool invertOp id b op) (l b) (r b)
+    pushNeg (RecT (BinaryOp op l r)) = \b -> TermLit $
+        BBOp (bool invertOp id b op) (unTermLit $ l b) (unTermLit $ r b)
     pushNeg (RecT (FlatOp op _)) = absurd op
 
 {-----------------------------------------------------------------------------}
@@ -550,11 +591,11 @@ flatten = flatten' . inject
 
 {-----------------------------------------------------------------------------}
 
-simplify :: (t a :<: Term BOps Bool a) => t a -> Term BNFlOps Void (Bool, a)
+simplify :: (t a :<: Term BOps Bool a) => t a -> TermLit BNFlOps Void a
 simplify term = case constantFold term of
-    Left True -> BConj []
-    Left False -> BDisj []
-    Right b -> (flatten . pushNegations') b
+    Left True -> TermLit $ BConj []
+    Left False -> TermLit $ BDisj []
+    Right b -> (TermLit . flatten . unTermLit . pushNegations') b
 
 {-----------------------------------------------------------------------------}
 -- Transform to CNF by distribution (inefficient)
@@ -567,7 +608,13 @@ data Conjunction e = Conjunction [e]
 data Disjunction e = Disjunction [e]
     deriving (Show, Eq, Functor, Foldable, Traversable)
 
-type CNF lit = Conjunction (Disjunction lit)
+--type CNF lit = Conjunction (Disjunction lit)
+newtype CNF name = CNF { unCNF :: Conjunction (Disjunction (Literal name)) }
+
+deriving instance Show name => Show (CNF name)
+deriving instance Functor CNF
+deriving instance Foldable CNF
+deriving instance Traversable CNF
 
 instance Applicative Conjunction where
     pure = Conjunction . pure
@@ -590,18 +637,18 @@ joinDisjunction :: Disjunction (Disjunction e) -> Disjunction e
 joinDisjunction (Disjunction xs) = -- Monad.join
     Disjunction [y | Disjunction x <- xs, y <- x]
 
-distributeToCNF :: forall a. Term BNFlOps Void a -> CNF a
-distributeToCNF = cata distr where
-    distr :: Alg (TermF BNFlOps Void a) (CNF a)
+distributeToCNF :: forall a. TermLit BNFlOps Void a -> CNF a
+distributeToCNF = cata distr . unTermLit where
+    distr :: Alg (TermF BNFlOps Void (Literal a)) (CNF a)
     distr (ConstT x) = absurd x
-    distr (VariableT x) = (pure . pure) x
+    distr (VariableT x) = CNF $ (pure . pure) x
     distr (RecT (UnaryOp op _)) = absurd op
     distr (RecT (BinaryOp op _ _)) = absurd op
     distr (RecT (FlatOp op xs)) = case op of
-        BConjunction -> joinConjunction $ Conjunction xs
-        BDisjunction -> fmap joinDisjunction . distributeDisjunction $ Disjunction xs
+        BConjunction -> CNF $ joinConjunction $ Conjunction $ unCNF <$> xs
+        BDisjunction -> CNF $ fmap joinDisjunction . distributeDisjunction $ Disjunction $ unCNF <$> xs
 
-toCNF :: (t a :<: Term BOps Bool a) => t a -> CNF (Literal a)
+toCNF :: (t a :<: Term BOps Bool a) => t a -> CNF a
 toCNF = distributeToCNF . simplify
 
 {-----------------------------------------------------------------------------}
@@ -615,6 +662,44 @@ appTerm (Rec f) = Rec $ fmap appTerm f
 substVars :: (var -> Term op val var') -> Term op val var -> Term op val var'
 substVars f = appTerm . fmap f
 
+-- | Special version for literals
+substVarsL :: forall var var' bop bflop val.
+    (ProperOpTag bop, ProperOpTag bflop)
+    => (var -> TermLit (Op BooleanUOp bop bflop) val var')
+    -> TermLit (Op BooleanUOp bop bflop) val var
+    -> TermLit (Op BooleanUOp bop bflop) val var'
+substVarsL f = TermLit . substVars f' . unTermLit where
+    f' :: Literal var -> Term (Op BooleanUOp bop bflop) val (Literal var')
+    f' (True, name)  = unTermLit $ f name
+    f' (False, name) = BNot $ unTermLit $ f name
+
+{-----------------------------------------------------------------------------}
+-- Evaluation
+
+class Eval f name where
+    eval :: (name -> Bool) -> f name -> Bool
+
+instance Ord name => Eval (Term BOps Bool) name where
+    eval lookup term = let     -- constantFold already does it, and we can prove it :)
+        saturated :: Term BOps Bool Void
+        saturated = substVars (Val . lookup) term
+        in case constantFold' saturated of
+            Left b  -> b
+            Right x -> absurd' x
+
+instance Ord name => Eval (TermLit BNOps Void) name where
+    eval :: (name -> Bool) -> TermLit BNOps Void name -> Bool
+    eval lookup term = let
+        lookupLit :: Literal name -> Term BNOps Bool Void
+        lookupLit (b, name) = Val $ lookup name `xor` b
+        saturated :: Term BNOps Bool Void
+        saturated = substVars lookupLit $ inject $ unTermLit term
+        term' :: Term BOps Bool Void
+        term' = inject saturated
+        in case constantFold' term' of
+            Left b  -> b
+            Right x -> absurd' x
+
 {-----------------------------------------------------------------------------}
 -- Handling mapped variables
 
@@ -623,8 +708,10 @@ type MappedNames name = (Map Int name, Map name Int)
 {- The variables numbers HAVE TO start with 1, because we will
     use signs in CNF to indicate negation
 -}
-mkMappedNames :: Ord name => [name] -> MappedNames name
-mkMappedNames nList = (Map.fromList $ zip [1..] nList, Map.fromList $ zip nList [1..])
+mkMappedNames :: Ord name => Set name -> MappedNames name
+mkMappedNames nSet = let
+    nList = Set.toList nSet
+    in (Map.fromList $ zip [1..] nList, Map.fromList $ zip nList [1..])
 
 mappedHasName :: Ord name => MappedNames name -> name -> Bool
 mappedHasName (_, m) name = Map.member name m
@@ -649,8 +736,6 @@ getIndexMap = snd . getMappedNames
 deriving instance (Show (f Int), Show name) => Show (Context f name)
 deriving instance (Eq (f Int), Eq name) => Eq (Context f name)
 
-type TermLit op val name = Term op val (Literal name)
-
 -- FIXME: Wrong for: Term op val (Bool, String)
 -- It would build a name map from LITERALS to Ints
 -- Demo:
@@ -659,7 +744,7 @@ buildContext :: forall f name. (Traversable f, Ord name)
     => f name -> Context f name
 buildContext t = let
     mappedNames :: MappedNames name
-    mappedNames = mkMappedNames (toList t)
+    mappedNames = mkMappedNames (foldMap Set.singleton t)
     indexNames :: name -> Int
     indexNames = (Map.!) (snd mappedNames)
     in Context mappedNames (fmap indexNames t)
@@ -701,7 +786,8 @@ Where "actually useful" means you can generate new ones.
 findFreshName :: MappedNames String -> String -> String
 findFreshName m prefix = head $ dropWhile exists' varnames where
     suffixes :: [String]
-    suffixes = {- "" : -} ([replicate k ['a'..'z'] | k <- [1..]] >>= sequence)
+    suffixes = [replicate k ['a'..'z'] | k <- [1..]] >>= sequence
+    --suffixes = "" :([replicate k ['a'..'z'] | k <- [1..]] >>= sequence)
     varnames :: [String]
     varnames = (prefix++) <$> suffixes
     exists' :: String -> Bool
@@ -775,7 +861,7 @@ withFresh ctx f = runIdentity (withFreshT ctx f)
 -- FIXME: Doesn't work on literals
 newFresh :: FreshT Identity (Term op val Int) -> Context (Term op val) String
 newFresh f = runIdentity $ do
-    (term, mapped) <- runFreshT f (mkMappedNames [])
+    (term, mapped) <- runFreshT f (mkMappedNames Set.empty)
     return $ Context mapped term
 
 {-----------------------------------------------------------------------------}
@@ -784,41 +870,41 @@ newFresh f = runIdentity $ do
 litNeg :: Literal a -> Literal a
 litNeg (b, v) = (not b, v)
 
-cnf_just :: Literal a -> CNF (Literal a)
-cnf_just a = pure $ pure a
+cnf_just :: Literal a -> CNF a
+cnf_just a = CNF $ pure $ pure a
 
-cnf_iff :: Literal a -> Literal a -> CNF (Literal a)
-cnf_iff a b = Conjunction               -- a ⇔ b ≡
+cnf_iff :: Literal a -> Literal a -> CNF a
+cnf_iff a b = CNF $ Conjunction         -- a ⇔ b ≡
     [   Disjunction [ litNeg a, b ]     -- a ⇒ b ∧
     ,   Disjunction [ a, litNeg b ]     -- a ⇐ b
     ]
 
-cnf_iff_and :: Literal a -> Literal a -> Literal a -> CNF (Literal a)
-cnf_iff_and z a b = Conjunction
+cnf_iff_and :: Literal a -> Literal a -> Literal a -> CNF a
+cnf_iff_and z a b = CNF $ Conjunction
     [   Disjunction [ litNeg z, a ]             -- z ⇒ a
     ,   Disjunction [ litNeg z, b ]             -- z ⇒ b
     ,   Disjunction [ z, litNeg a, litNeg b ]   -- ¬z ⇒ ¬a ∨ ¬b
     ]
 
-cnf_iff_or :: Literal a -> Literal a -> Literal a -> CNF (Literal a)
-cnf_iff_or z a b = Conjunction
+cnf_iff_or :: Literal a -> Literal a -> Literal a -> CNF a
+cnf_iff_or z a b = CNF $ Conjunction
     [   Disjunction [ litNeg z, a, b ]          -- z ⇒ a ∨ b
     ,   Disjunction [ z, litNeg a ]             -- ¬z ⇒ ¬a
     ,   Disjunction [ z, litNeg b ]             -- ¬z ⇒ ¬b
     ]
 
 cnf_all :: [CNF a] -> CNF a
-cnf_all = joinConjunction . Conjunction
+cnf_all = CNF . joinConjunction . Conjunction . fmap unCNF
 
-tseitinTransformM :: forall m. Monad m => Term BOps Void Int -> FreshT m (CNF (Bool, Int))
+tseitinTransformM :: forall m. Monad m => Term BOps Void Int -> FreshT m (CNF Int)
 tseitinTransformM term = do
     (zTerm, cnf) <- cata tt term
     return $ cnf_all [cnf, cnf_just zTerm]
     where
-    tt :: Alg (TermF BOps Void Int) (FreshT m (Literal Int, CNF (Literal Int)))
+    tt :: Alg (TermF BOps Void Int) (FreshT m (Literal Int, CNF Int))
     tt t = sequenceA t >>= \case
         ConstT v    -> absurd v
-        VariableT v -> return ((True, v), Conjunction [])
+        VariableT v -> return ((True, v), CNF $ Conjunction [])
         RecT (UnaryOp BooleanNot (v, cnf)) -> return (litNeg v, cnf)
         RecT (BinaryOp BooleanAnd (va, cnfa) (vb, cnfb)) ->
             freshName "zA_" >>= \z -> let
@@ -839,18 +925,18 @@ tseitinTransformM term = do
         RecT (FlatOp op _) -> absurd op
 
 -- tseitinTransform' :: Term BOps Bool a -> Either Bool (Term BOps Void a)
-tseitinTransform' :: Term BOps Void String -> CNF (Literal String)
+tseitinTransform' :: Term BOps Void String -> CNF String
 tseitinTransform' t = let
     (Context nmap iterm) = buildContext t
-    result :: (CNF (Literal Int), MappedNames String)
+    result :: (CNF Int, MappedNames String)
     result = runIdentity $ runFreshT (tseitinTransformM iterm) nmap
     (cnf, (iton, _)) = result
-    in (fmap . fmap . fmap) (iton Map.!) cnf 
+    in fmap (iton Map.!) cnf 
 
-toCNF2 :: Term BOps Bool String -> CNF (Literal String)
+toCNF2 :: Term BOps Bool String -> CNF String
 toCNF2 term = case constantFold term of
-    Left True   -> Conjunction []
-    Left False  -> Conjunction [ Disjunction [] ]
+    Left True   -> CNF $ Conjunction []
+    Left False  -> CNF $ Conjunction [ Disjunction [] ]
     Right term' -> tseitinTransform' term'
 
 {-----------------------------------------------------------------------------}
@@ -889,6 +975,9 @@ class Boolean b where
     and :: b -> b -> b
     or :: b -> b -> b
     not :: b -> b
+
+    xor :: b -> b -> b
+    xor a b = a && not b || not a && b
 
 infixr 3 &&
 (&&) :: Boolean b => b -> b -> b
@@ -1015,7 +1104,7 @@ demo2a = existsUnique [1..3::Int] (\x -> var $ "N" ++ show x)
 demo2b :: BooleanExpr String
 demo2b = existsUnique' [1..3::Int] (\x -> var $ "N" ++ show x)
 
-demo2c :: Term BNFlOps Void (Bool, String)
+demo2c :: TermLit BNFlOps Void String
 demo2c = simplify demo2b
 --demo2c = flatten @Bool @String $ constantFold demo2b
 

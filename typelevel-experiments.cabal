@@ -49,14 +49,17 @@ library
       src
   default-extensions: ConstraintKinds DataKinds DefaultSignatures DeriveFunctor DeriveFoldable DeriveTraversable EmptyCase ExistentialQuantification FlexibleContexts FlexibleInstances GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses NoCUSKs NoStarIsType PolyKinds RankNTypes ScopedTypeVariables StandaloneDeriving StandaloneKindSignatures TemplateHaskell TypeApplications TypeFamilies TypeOperators UndecidableInstances
   build-depends:
-      base >=4.7 && <5
+      QuickCheck
+    , base >=4.7 && <5
     , bound
     , containers
+    , criterion
     , data-fix
     , decidable
     , deriving-compat
     , hashable
     , mtl
+    , quickcheck-instances
     , recursion-schemes
     , singletons
     , text
@@ -73,14 +76,17 @@ executable typelevel-experiments-exe
   default-extensions: ConstraintKinds DataKinds DefaultSignatures DeriveFunctor DeriveFoldable DeriveTraversable EmptyCase ExistentialQuantification FlexibleContexts FlexibleInstances GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses NoCUSKs NoStarIsType PolyKinds RankNTypes ScopedTypeVariables StandaloneDeriving StandaloneKindSignatures TemplateHaskell TypeApplications TypeFamilies TypeOperators UndecidableInstances
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
+      QuickCheck
+    , base >=4.7 && <5
     , bound
     , containers
+    , criterion
     , data-fix
     , decidable
     , deriving-compat
     , hashable
     , mtl
+    , quickcheck-instances
     , recursion-schemes
     , singletons
     , text
@@ -99,14 +105,17 @@ test-suite typelevel-experiments-test
   default-extensions: ConstraintKinds DataKinds DefaultSignatures DeriveFunctor DeriveFoldable DeriveTraversable EmptyCase ExistentialQuantification FlexibleContexts FlexibleInstances GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses NoCUSKs NoStarIsType PolyKinds RankNTypes ScopedTypeVariables StandaloneDeriving StandaloneKindSignatures TemplateHaskell TypeApplications TypeFamilies TypeOperators UndecidableInstances
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
+      QuickCheck
+    , base >=4.7 && <5
     , bound
     , containers
+    , criterion
     , data-fix
     , decidable
     , deriving-compat
     , hashable
     , mtl
+    , quickcheck-instances
     , recursion-schemes
     , singletons
     , text

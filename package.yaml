@@ -33,7 +33,9 @@ dependencies:
 - recursion-schemes
 - mtl
 - transformers
-#- list-witnesses
+- criterion
+- QuickCheck
+- quickcheck-instances
 
 default-extensions:
 - ConstraintKinds
