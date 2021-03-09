@@ -601,12 +601,6 @@ distributeToCNF = cata distr where
         BConjunction -> joinConjunction $ Conjunction xs
         BDisjunction -> fmap joinDisjunction . distributeDisjunction $ Disjunction xs
 
-moo1 :: Term BNFlOps Void Int
-moo1 = BConj[BDisj[Var 1,Var 2],BDisj[Var 3,Var 4]]
-
-moo2 :: Term BNFlOps Void Int
-moo2 = BDisj[BConj[Var 1,Var 2],BConj[Var 3,Var 4]]
-
 toCNF :: (t a :<: Term BOps Bool a) => t a -> CNF (Literal a)
 toCNF = distributeToCNF . simplify
 
@@ -641,26 +635,28 @@ mappedInsert i name (iton, ntoi)
     | Map.member name ntoi  = error $ "Name " ++ show name ++ " already exists"
     | otherwise             = (Map.insert i name iton, Map.insert name i ntoi)
 
--- FIXME: This is useless because it only works for terms
--- It should work for arbitrary functors
-data Context name op val = Context
+data Context f name = Context
     {   getMappedNames :: MappedNames name
-    ,   getTerm :: Term op val Int
+    ,   getTerm :: f Int
     }
 
-getNameMap :: Context name op val -> Map Int name
+getNameMap :: Context f name -> Map Int name
 getNameMap = fst . getMappedNames
 
-getIndexMap :: Context name op val ->  Map name Int
+getIndexMap :: Context f name ->  Map name Int
 getIndexMap = snd . getMappedNames
 
-deriving instance (Show name, Show val) => Show (Context name op val)
-deriving instance (Eq name, Eq val) => Eq (Context name op val)
+deriving instance (Show (f Int), Show name) => Show (Context f name)
+deriving instance (Eq (f Int), Eq name) => Eq (Context f name)
 
--- queryIndex :: Context name op val -> name -> Int
--- queryIndex ctx = fst . (Map.!) (getInfoMap ctx)
+type TermLit op val name = Term op val (Literal name)
 
-buildContext :: forall name op val. Ord name => Term op val name -> Context name op val
+-- FIXME: Wrong for: Term op val (Bool, String)
+-- It would build a name map from LITERALS to Ints
+-- Demo:
+-- >>> buildContext $ simplify demo1b
+buildContext :: forall f name. (Traversable f, Ord name)
+    => f name -> Context f name
 buildContext t = let
     mappedNames :: MappedNames name
     mappedNames = mkMappedNames (toList t)
@@ -668,14 +664,15 @@ buildContext t = let
     indexNames = (Map.!) (snd mappedNames)
     in Context mappedNames (fmap indexNames t)
 
-destroyContext :: forall name op val. Ord name => Context name op val -> Term op val name
+destroyContext :: forall f name. (Traversable f, Ord name)
+    => Context f name -> f name
 destroyContext (Context mappedNames t) = let
     remapNames :: Int -> name
     remapNames = (Map.!) (fst mappedNames)
     in fmap remapNames t
 
--- TODO: Could be much more efficient
-cRenameVars :: (Ord a, Ord b) => (a -> b) -> Context a op val -> Context b op val
+-- TODO: Could be much more efficient than rebuilding the whole context
+cRenameVars :: (Traversable f, Ord a, Ord b) => (a -> b) -> Context f a -> Context f b
 cRenameVars rename = buildContext . fmap rename . destroyContext
 
 
@@ -704,7 +701,7 @@ Where "actually useful" means you can generate new ones.
 findFreshName :: MappedNames String -> String -> String
 findFreshName m prefix = head $ dropWhile exists' varnames where
     suffixes :: [String]
-    suffixes = "" : ([replicate k ['a'..'z'] | k <- [1..]] >>= sequence)
+    suffixes = {- "" : -} ([replicate k ['a'..'z'] | k <- [1..]] >>= sequence)
     varnames :: [String]
     varnames = (prefix++) <$> suffixes
     exists' :: String -> Bool
@@ -757,10 +754,11 @@ runFreshT fresh mapped = let
         (a, FreshState _ _ mapped') <- runStateT (toStateT fresh) initState
         return (a, mapped')
 
+-- FIXME: Useless, works only on terms, not on CNF and literals
 withFreshT :: forall m op val. Monad m
-    => Context String op val
+    => Context (Term op val) String
     -> (Term op val Int -> FreshT m (Term op val Int))
-    -> m (Context String op val)
+    -> m (Context (Term op val) String)
 withFreshT (Context mapped term) f = let
     result :: m (Term op val Int, MappedNames String)
     result = runFreshT (f term) mapped
@@ -768,23 +766,17 @@ withFreshT (Context mapped term) f = let
         (term', mapped') <- result
         return $ Context mapped' term'
 
-withFresh :: Context String op val
+-- FIXME: Useless, works only on terms, not on CNF and literals
+withFresh :: Context (Term op val) String
     -> (Term op val Int -> FreshT Identity (Term op val Int))
-    -> Context String op val
+    -> Context (Term op val) String
 withFresh ctx f = runIdentity (withFreshT ctx f)
 
-newFresh :: FreshT Identity (Term op val Int) -> Context String op val
+-- FIXME: Doesn't work on literals
+newFresh :: FreshT Identity (Term op val Int) -> Context (Term op val) String
 newFresh f = runIdentity $ do
     (term, mapped) <- runFreshT f (mkMappedNames [])
     return $ Context mapped term
-
-testFreshT :: BooleanExpr String
-testFreshT = destroyContext $ newFresh $ do
-    a1 <- freshName "a"
-    b <- freshName "b"
-    a2 <- freshName "a"
-    a3 <- freshName "a"
-    return $ Var a1 `BAnd` BNot (Var b) `BOr` Var a2 `BOr` Var a3
 
 {-----------------------------------------------------------------------------}
 -- Tseitin-Transformation
@@ -1002,10 +994,20 @@ existsUnique' s p = exists s $ \x ->
 
 {-----------------------------------------------------------------------------}
 
--- An actual term
-demo1 :: BooleanExpr String
-demo1 = BNot $
+-- An actual term (very simple)
+demo1a :: BooleanExpr String
+demo1a = BNot $
     (BNot (Var "a") `BOr` Var "b") `BAnd` BNot (Var "c" `BAnd` Var "d")
+
+-- Creating a term using FreshT
+demo1b :: BooleanExpr String
+demo1b = destroyContext $ newFresh $ do
+    a1 <- freshName ""
+    b <- freshName ""
+    a2 <- freshName ""
+    return $ (Var a1 `and` not (Var b) `or` Var a2)
+        `and` (Var b `or` not (Var a2))
+
 
 -- A demo of irregular terms with existsUnique'
 demo2a :: BooleanExpr String
