@@ -31,6 +31,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Control.Monad.Identity
 import Control.Monad.State
+import Control.Monad.Writer
 
 {-# ANN module "HLint: ignore Use newtype instead of data" #-}
 {-# ANN module "HLint: ignore Use camelCase" #-}
@@ -208,6 +209,19 @@ instance Monad (Term op val) where
     Fix4 (VariableT v)  >>= f   = f v
     Fix4 (ConstT x)     >>= _   = Fix4 $ ConstT x
     Fix4 (RecT op)      >>= f   = Fix4 $ RecT $ fmap (>>= f) op
+
+{-----------------------------------------------------------------------------}
+-- Foldable, Traversable for TermF and Term
+
+instance Foldable (TermF op val var) where
+   foldMap = foldMapDefault
+
+instance Traversable (TermF op val var) where
+    traverse :: Applicative f => (a -> f b) -> TermF op val var a -> f (TermF op val var b)
+    traverse f = \case
+        (ConstT v)      -> pure (ConstT v)
+        (VariableT v)   -> pure (VariableT v)
+        (RecT op)       -> RecT <$> traverse f op
 
 instance Foldable (Term op val) where
    foldMap = foldMapDefault
@@ -485,6 +499,8 @@ invertOp :: BooleanBOp -> BooleanBOp
 invertOp BooleanAnd = BooleanOr
 invertOp BooleanOr = BooleanAnd
 
+type Literal a = (Bool, a)
+
 type BNOps = Op Void BooleanBOp Void
 
 pushNegations' :: Term BOps Void a -> Term BNOps Void (Bool, a)
@@ -591,7 +607,7 @@ moo1 = BConj[BDisj[Var 1,Var 2],BDisj[Var 3,Var 4]]
 moo2 :: Term BNFlOps Void Int
 moo2 = BDisj[BConj[Var 1,Var 2],BConj[Var 3,Var 4]]
 
-toCNF :: (t a :<: Term BOps Bool a) => t a -> CNF (Bool, a)
+toCNF :: (t a :<: Term BOps Bool a) => t a -> CNF (Literal a)
 toCNF = distributeToCNF . simplify
 
 {-----------------------------------------------------------------------------}
@@ -625,6 +641,8 @@ mappedInsert i name (iton, ntoi)
     | Map.member name ntoi  = error $ "Name " ++ show name ++ " already exists"
     | otherwise             = (Map.insert i name iton, Map.insert name i ntoi)
 
+-- FIXME: This is useless because it only works for terms
+-- It should work for arbitrary functors
 data Context name op val = Context
     {   getMappedNames :: MappedNames name
     ,   getTerm :: Term op val Int
@@ -767,6 +785,109 @@ testFreshT = destroyContext $ newFresh $ do
     a2 <- freshName "a"
     a3 <- freshName "a"
     return $ Var a1 `BAnd` BNot (Var b) `BOr` Var a2 `BOr` Var a3
+
+{-----------------------------------------------------------------------------}
+-- Tseitin-Transformation
+
+litNeg :: Literal a -> Literal a
+litNeg (b, v) = (not b, v)
+
+cnf_just :: Literal a -> CNF (Literal a)
+cnf_just a = pure $ pure a
+
+cnf_iff :: Literal a -> Literal a -> CNF (Literal a)
+cnf_iff a b = Conjunction               -- a ⇔ b ≡
+    [   Disjunction [ litNeg a, b ]     -- a ⇒ b ∧
+    ,   Disjunction [ a, litNeg b ]     -- a ⇐ b
+    ]
+
+cnf_iff_and :: Literal a -> Literal a -> Literal a -> CNF (Literal a)
+cnf_iff_and z a b = Conjunction
+    [   Disjunction [ litNeg z, a ]             -- z ⇒ a
+    ,   Disjunction [ litNeg z, b ]             -- z ⇒ b
+    ,   Disjunction [ z, litNeg a, litNeg b ]   -- ¬z ⇒ ¬a ∨ ¬b
+    ]
+
+cnf_iff_or :: Literal a -> Literal a -> Literal a -> CNF (Literal a)
+cnf_iff_or z a b = Conjunction
+    [   Disjunction [ litNeg z, a, b ]          -- z ⇒ a ∨ b
+    ,   Disjunction [ z, litNeg a ]             -- ¬z ⇒ ¬a
+    ,   Disjunction [ z, litNeg b ]             -- ¬z ⇒ ¬b
+    ]
+
+cnf_all :: [CNF a] -> CNF a
+cnf_all = joinConjunction . Conjunction
+
+tseitinTransformM :: forall m. Monad m => Term BOps Void Int -> FreshT m (CNF (Bool, Int))
+tseitinTransformM term = do
+    (zTerm, cnf) <- cata tt term
+    return $ cnf_all [cnf, cnf_just zTerm]
+    where
+    tt :: Alg (TermF BOps Void Int) (FreshT m (Literal Int, CNF (Literal Int)))
+    tt t = sequenceA t >>= \case
+        ConstT v    -> absurd v
+        VariableT v -> return ((True, v), Conjunction [])
+        RecT (UnaryOp BooleanNot (v, cnf)) -> return (litNeg v, cnf)
+        RecT (BinaryOp BooleanAnd (va, cnfa) (vb, cnfb)) ->
+            freshName "zA_" >>= \z -> let
+            t' = cnf_all
+                [   cnfa
+                ,   cnfb
+                ,   cnf_iff_and (True, z) va vb
+                ]
+            in return ((True, z), t')
+        RecT (BinaryOp BooleanOr (va, cnfa) (vb, cnfb)) ->
+            freshName "zO_" >>= \z -> let
+            t' = cnf_all
+                [   cnfa
+                ,   cnfb
+                ,   cnf_iff_or (True, z) va vb
+                ]
+            in return ((True, z), t')
+        RecT (FlatOp op _) -> absurd op
+
+-- tseitinTransform' :: Term BOps Bool a -> Either Bool (Term BOps Void a)
+tseitinTransform' :: Term BOps Void String -> CNF (Literal String)
+tseitinTransform' t = let
+    (Context nmap iterm) = buildContext t
+    result :: (CNF (Literal Int), MappedNames String)
+    result = runIdentity $ runFreshT (tseitinTransformM iterm) nmap
+    (cnf, (iton, _)) = result
+    in (fmap . fmap . fmap) (iton Map.!) cnf 
+
+toCNF2 :: Term BOps Bool String -> CNF (Literal String)
+toCNF2 term = case constantFold term of
+    Left True   -> Conjunction []
+    Left False  -> Conjunction [ Disjunction [] ]
+    Right term' -> tseitinTransform' term'
+
+{-----------------------------------------------------------------------------}
+
+type DimacsWriter a = WriterT [String] Identity a
+
+--instance Show a => Show (DimacsWriter a) where
+
+dimacsComment :: String -> DimacsWriter ()
+dimacsComment s = tell ["c " ++ s]
+
+dimacsProblemLine :: String -> Int -> Int -> DimacsWriter ()
+dimacsProblemLine format nVars nClauses = tell
+    [   "p "
+    ++  format
+    ++  " "
+    ++  show nVars
+    ++  " "
+    ++  show nClauses
+    ]
+
+dimacsClause :: [Int] -> DimacsWriter ()
+dimacsClause xs = tell [
+        P.foldr (\x r -> shows x . showString " " . r) id xs "0"
+    ]
+
+-- cnfToDimacs' :: CNF (Literal String) -> DimacsWriter ()
+-- cnfToDimacs' = let
+--     (Context nmap iterm) = buildContext t
 
 {-----------------------------------------------------------------------------}
 -- Mini logic module
