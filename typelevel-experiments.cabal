@@ -28,10 +28,14 @@ library
       Bound.DemoBound
       Bound.Simple
       Compdata.AlmostCompData
+      Compdata.Fail.CustomCompData
       Compdata.SubsumeCommon
       Compdata.VoidTermCompdata
       Impredicative
-      NonDet
+      NonDetSearch.ConstrainedMonadic
+      NonDetSearch.CPSControl
+      NonDetSearch.NonDet
+      NonDetSearch.Nondeterminism
       PatternSynonyms
       TermRepresentation.FindInjection
       TermRepresentation.GADT

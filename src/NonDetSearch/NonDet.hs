@@ -1,7 +1,7 @@
 
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 
-module NonDet where
+module NonDetSearch.NonDet where
 
 import Debug.Trace
 
