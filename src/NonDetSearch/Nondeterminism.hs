@@ -4,6 +4,9 @@
     -Wno-unused-matches
     -Wno-name-shadowing
 #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveGeneric #-}      -- for deepseq NFData
+{-# LANGUAGE DeriveAnyClass #-}     -- for deepseq NFData
 
 -- Playing around with nondeterministic evaluation
 -- from the paper https://www-ps.informatik.uni-kiel.de/~sebf/data/pub/atps09.pdf
@@ -14,6 +17,12 @@ import Prelude hiding (Bounded)
 import Control.Applicative
 import Control.Monad
 
+import GHC.Generics (Generic, Generic1)
+import Control.DeepSeq (NFData, NFData1, deepseq)
+
+import Debug.Trace (trace, traceM)
+
+{-----------------------------------------------------------------------------}
 -- 1. Introduction
 
 {- If "m a" represents nondeterministic computation of a,
@@ -21,7 +30,8 @@ import Control.Monad
 -}
 anyof :: MonadPlus m => [a] -> m a
 anyof [] = mzero
-anyof (x : xs) = anyof xs <|> return x
+--anyof (x : xs) = anyof xs <|> return x
+anyof (x : xs) = return x <|> anyof xs
 
 -- 2. Monadic Backtracking
 -- Lists as nondeterministic evaluation
@@ -146,6 +156,7 @@ instance Alternative n => Alternative (CPS n) where
 
 instance Alternative n => MonadPlus (CPS n)
 
+{-----------------------------------------------------------------------------}
 -- 2.3. Efficient backtracking
 
 -- instance Computation DiffList where
@@ -156,10 +167,12 @@ instance Alternative n => MonadPlus (CPS n)
 backtrack :: CPS DiffList a -> [a]
 backtrack = dlToList . runCPS
 
+{-----------------------------------------------------------------------------}
 -- 3. Different search strategies
 -- 3.1. Breadth-first search
 
 newtype Levels n a = Levels { levels :: [n a] }
+    deriving (Eq, Generic, Generic1, NFData, NFData1)
 
 runLevels :: Alternative n => Levels n a -> n a
 runLevels = foldr (<|>) empty . levels
@@ -178,6 +191,9 @@ merge :: Alternative n => [n a] -> [n a] -> [n a]
 merge []     ys     = ys
 merge xs     []     = xs
 merge (x:xs) (y:ys) = (x <|> y) : merge xs ys
+
+instance Show (n a) => Show (Levels n a) where
+    show = show . levels
 
 instance Functor n => Functor (Levels n) where
     fmap :: (a -> b) -> Levels n a -> Levels n b
@@ -200,10 +216,15 @@ instance Alternative n => Alternative (Levels n) where
 levelSearch :: CPS (Levels DiffList) a -> [a]
 levelSearch = dlToList . runLevels . runCPS
 
--- MD: This runs without DList as well...
+-- MD: This works without DList as well...
 inefficientLevelSearch :: CPS (Levels []) a -> [a]
 inefficientLevelSearch = runLevels . runCPS
 
+-- For demonstration of 'Levels'
+dLevelSearch :: CPS (Levels []) a -> Levels [] a
+dLevelSearch = runCPS
+
+{-----------------------------------------------------------------------------}
 -- 3.2. Iterative deepening depth-first search
 
 newtype Bounded n a = Bounded { boundedBy :: Int -> n a }
@@ -252,6 +273,8 @@ iterDepth step = runLevels . levelIter step
 iterDepthSearch :: Int -> CPS (Bounded DiffList) a -> [a]
 iterDepthSearch step = dlToList . iterDepth step
 
+{-----------------------------------------------------------------------------}
+
 -- MD: "Maybe" just looks for one solution :)
 singleSearch :: CPS (Levels Maybe) a -> Maybe a
 singleSearch = runLevels . runCPS
@@ -271,6 +294,67 @@ pytriple = do
 --     c <- [1..10]
 --     guard $ a * a + b * b == c * c
 --     return (a, b, c)
+
+{- Examples to run:
+
+Single:
+
+>>> singleSearch pytriple
+
+Depth first (will not terminate!):
+
+>>> backtrack pytriple
+
+Breadth first:
+
+>>> take 10 $ levelSearch pytriple
+>>> take 10 $ inefficientLevelSearch pytriple
+
+Iterative deepening:
+
+>>> take 10 $ iterDepthSearch 1 pytriple
+
+Debugging tips in ghci:
+@
+:break 263
+:break 266
+:set stop :list
+:set -fprint-evld-with-show
+inefficientLevelSearch pytriple
+:steplocal
+@
+
+-}
+
+-- | Find a string that matches @s@ via search
+strMatch :: MonadPlus m => String -> m String
+strMatch s = startWith "" where
+    startWith x
+        | x == s                = return x
+        | length x >= length s  = empty     -- Part of the strat?
+        | otherwise = do
+            ch <- anyof ['a'..'z']
+            let x' = x ++ [ch]
+            traceM x'
+            startWith x'
+
+inter :: (Show v) => [v] -> IO ()
+inter [] = putStrLn "End"
+inter (x:xs) = do
+    print x
+    _ <- getLine
+    inter xs
+
+{-
+singleSearch (strMatch "gg")
+inter $ backtrack (strMatch "gg")
+inter $ levelSearch (strMatch "gg")
+-}
+
+demo :: String
+demo = let
+    x = dLevelSearch (strMatch "gg")
+    in x `deepseq` show x
 
 {-----------------------------------------------------------------------------}
 
