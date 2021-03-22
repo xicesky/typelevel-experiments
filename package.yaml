@@ -21,6 +21,7 @@ description:         Please see the README on GitHub at <https://github.com/xice
 
 dependencies:
 - base >= 4.7 && < 5
+- deepseq
 - text
 - singletons
 - decidable
@@ -79,6 +80,18 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - typelevel-experiments
+
+benchmarks:
+  nondet-benchmarks:
+    main:                NonDetBench.hs
+    source-dirs:         benchmark
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - typelevel-experiments
+    - criterion
 
 tests:
   typelevel-experiments-test:
