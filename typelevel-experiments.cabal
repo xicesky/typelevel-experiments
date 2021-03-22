@@ -41,6 +41,7 @@ library
       NonDetSearch.Nondeterminism
       NonDetSearch.SearchImpl
       NonDetSearch.SearchImpl2
+      NonDetSearch.SearchImplCustomEff
       PatternSynonyms
       TermRepresentation.FindInjection
       TermRepresentation.GADT
@@ -67,6 +68,7 @@ library
     , decidable
     , deepseq
     , deriving-compat
+    , freer-simple
     , hashable
     , mtl
     , quickcheck-instances
@@ -95,6 +97,7 @@ executable typelevel-experiments-exe
     , decidable
     , deepseq
     , deriving-compat
+    , freer-simple
     , hashable
     , mtl
     , quickcheck-instances
@@ -125,6 +128,7 @@ test-suite typelevel-experiments-test
     , decidable
     , deepseq
     , deriving-compat
+    , freer-simple
     , hashable
     , mtl
     , quickcheck-instances
@@ -155,6 +159,7 @@ benchmark nondet-benchmarks
     , decidable
     , deepseq
     , deriving-compat
+    , freer-simple
     , hashable
     , mtl
     , quickcheck-instances

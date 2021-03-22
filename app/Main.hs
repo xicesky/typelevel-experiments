@@ -13,13 +13,16 @@ Try something like this instead:
 module Main where
 
 import System.Environment
-import System.Exit
+--import System.Exit
 
+--import NonDetSearch.NonDet
 import NonDetSearch.SearchImpl
+import qualified NonDetSearch.SearchImplCustomEff as OLD
 
 funcs :: [(String, [String] -> IO ())]
 funcs =
     [   ("profSearch", profSearch)
+    ,   ("profSearchOld", OLD.profSearch)
     ]
 
 help :: IO ()

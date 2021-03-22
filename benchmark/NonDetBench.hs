@@ -8,14 +8,17 @@ http://www.serpentine.com/criterion/tutorial.html
 -}
 import Criterion.Main
 
+import NonDetSearch.NonDet
 import NonDetSearch.SearchImpl
+import qualified NonDetSearch.SearchImplCustomEff as OLD
 
 newtype SFun = SFun { getFun :: forall a. (forall m. (Monad m, NonDet m) => m a) -> [a] }
 
 searchFuns :: [(String, SFun)]
 searchFuns =
-    [   ("searchList", SFun searchList)
-    ,   ("searchND", SFun searchND)
+    [   ("searchList",  SFun searchList)
+    ,   ("searchND",    SFun searchND)
+    ,   ("searchNDOld", SFun OLD.searchND)
     ]
 
 -- Awkward!!
@@ -28,7 +31,7 @@ benchmarkSearch =
         [   bench fname $ nf (pg f) n
         | (fname, f) <- searchFuns
         ]
-    | n <- [8,9]
+    | n <- [7,8]
     ]
 
 benchmarks :: [Benchmark]
